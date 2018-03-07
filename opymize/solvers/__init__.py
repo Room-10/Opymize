@@ -1,2 +1,2 @@
 
-from opymize.pdhg import *
+from opymize.solvers.pdhg import *

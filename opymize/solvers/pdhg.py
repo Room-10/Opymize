@@ -15,7 +15,6 @@ class PDHG(object):
         self.linop = A
         self.itervars = { 'xk': self.g.x.new(), 'yk': self.f.x.new() }
         self.constvars = {}
-        self.extravars = {}
         self.use_gpu = False
 
     def obj_primal(self, x, Ax):

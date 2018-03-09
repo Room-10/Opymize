@@ -7,7 +7,7 @@ from opymize.linear.scale import *
 import numpy as np
 from numpy.linalg import norm
 
-def normest(linop, tol=1.0e-4, maxits=500):
+def normest(linop, xy=None, tol=1.0e-4, maxits=500):
     """
     Estimate the spectral norm of the given linear operator `linop`.
     """
@@ -15,8 +15,8 @@ def normest(linop, tol=1.0e-4, maxits=500):
     itn = 0
 
     # Compute an estimate of the abs-val column sums..
-    x = np.empty(n)
-    y = np.ones(m)
+    x, y = (np.empty(n), np.empty(m)) if xy is None else xy
+    y[:] = 1.0
     y[np.random.randn(m) < 0] = -1
     linop.adjoint(y, x)
     x[:] = np.abs(x)

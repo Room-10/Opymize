@@ -192,8 +192,8 @@ class PDHG(object):
 
 
     def solve(self, continue_at=None, step_bound=None, step_factor=1.0,
-                    term_relgap=1e-5, term_infeas=None, term_maxiter=int(1e4),
-                    granularity=500, use_gpu=True, steps="const"):
+                    term_relgap=1e-5, term_infeas=None, term_maxiter=int(5e4),
+                    granularity=5000, use_gpu=True, steps="const"):
         i = self.itervars
         c = self.constvars
 

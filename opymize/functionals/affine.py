@@ -73,7 +73,7 @@ class MaskedAffineFct(Functional):
     def __call__(self, x, grad=False):
         x = self.x.vars(x)[0]
         val = np.einsum('ik,ik->', x[self.mask,:], self.c[self.mask,:])
-        infeas = norm(x[self.nmask,:], ord=np.inf)
+        infeas = 0.0 if np.all(self.mask) else norm(x[self.nmask,:], ord=np.inf)
         result = (val, infeas)
         if grad:
             dF = self.x.new()

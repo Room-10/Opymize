@@ -179,6 +179,8 @@ class L1NormsProj(Operator):
         self.lbd = lbd
         self._xnorms = np.zeros((N,), order='C')
         self.matrixnorm = matrixnorm
+        if matrixnorm == "frobenius":
+            self._jacobian = L12ProjJacobian(self.N, self.M, self.lbd)
 
     def prepare_gpu(self):
         constvars = {
@@ -206,34 +208,40 @@ class L1NormsProj(Operator):
             y = self.y.vars(y)[0]
             y[:] = x
         else:
-            assert not jacobian
             y = x
+            if jacobian:
+                xn = self._jacobian.xbar_normed
+                xn[:] = x.reshape(xn.shape)
+                x = xn.reshape(x.shape)
         extind = norm_projection(y, self._xnorms, self.lbd,
                                  matrixnorm=self.matrixnorm)
         if jacobian:
-            prox_grad = L12ProjJacobian(self.N, self.M, self.lbd,
-                                        x, extind, self._xnorms)
-            return prox_grad
+            self._jacobian.update(x, extind, self._xnorms)
+            return self._jacobian
 
 class L12ProjJacobian(LinOp):
     """ Jacobian of L1NormsProj for Frobenius norm """
-    def __init__(self, N, M, lbd, xbar, exterior, xnorms):
+    def __init__(self, N, M, lbd):
         # xnorms[i] = 1.0/|xbar[i,:,:]|_2
         #  exterior = (xbar > lbd)
         LinOp.__init__(self)
         self.x = Variable((N, M[0]*M[1]))
         self.y = self.x
+        self.lbd = lbd
         self.adjoint = self
+        self.extind = np.zeros(N, dtype=bool)
+        self.intind = np.zeros(N, dtype=bool)
+        self.xbar_normed = self.x.vars(self.x.new())[0]
+        self.lbd_norms = np.zeros(N)
 
-        self.extind = exterior
-        self.intind = np.logical_not(exterior)
+    def update(self, xbar, exterior, xnorms):
+        self.extind[:] = exterior
+        self.intind[:] = np.logical_not(exterior)
 
-        self.xbar_normed = self.x.vars(xbar.copy())[0]
+        self.xbar_normed[:] = xbar.reshape(self.xbar_normed.shape)
         self.xbar_normed[exterior,:] *= xnorms[exterior,None]
-        self.xbar_normed = self.xbar_normed.ravel()
 
-        self.lbd_norms = xnorms.copy()
-        self.lbd_norms[:] *= lbd
+        self.lbd_norms[:] = self.lbd*xnorms
 
     def _call_cpu(self, x, y=None, add=False):
         x = self.x.vars(x)[0]
@@ -243,7 +251,7 @@ class L12ProjJacobian(LinOp):
             yy = self.y.vars(y)[0]
 
         # xn[i,k] = xbar[i,k]/|xbar[i,:]|
-        xn = self.x.vars(self.xbar_normed)[0]
+        xn = self.xbar_normed
 
         # y[norms <= lbd] = x
         yy[self.intind,:] = x[self.intind,:]

@@ -111,9 +111,9 @@ class ShiftScaleOp(Operator):
             shiftstr = ""
 
         self.gpuvars = {
-            'shift':    gpuarray.to_gpu(np.asarray(self.shift, dtype=np.float64)),
-            'a':        gpuarray.to_gpu(np.asarray(self.a, dtype=np.float64)),
-            'b':        gpuarray.to_gpu(np.asarray(self.b, dtype=np.float64))
+            'shift':    gpuarray.to_gpu(np.array(self.shift, dtype=np.float64, ndmin=1)),
+            'a':        gpuarray.to_gpu(np.array(self.a, dtype=np.float64, ndmin=1)),
+            'b':        gpuarray.to_gpu(np.array(self.b, dtype=np.float64, ndmin=1))
         }
         headstr = "double *x, double *y, double *shift, double *a, double *b"
         self._kernel = ElementwiseKernel(headstr,

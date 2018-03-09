@@ -37,6 +37,8 @@ class AffineFct(Functional):
 
     def prox(self, tau):
         self._prox.b = -tau
+        if hasattr(self._prox, 'gpuvars'):
+            self._prox.gpuvars['b'][:] = np.atleast_1d(self._prox.b)
         return self._prox
 
 class ConstFct(AffineFct):
@@ -83,4 +85,6 @@ class MaskedAffineFct(Functional):
 
     def prox(self, tau):
         self._prox.b = -tau
+        if hasattr(self._prox, 'gpuvars'):
+            self._prox.gpuvars['b'][:] = np.atleast_1d(self._prox.b)
         return self._prox

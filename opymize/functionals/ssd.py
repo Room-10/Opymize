@@ -49,4 +49,7 @@ class SSD(Functional):
         tauvol[msk,:] = np.einsum('ik,k->ik', tauvol[msk,:], self.vol)
         self._prox.a = 1.0/(1.0 + tauvol.ravel())
         self._prox.b = tauvol.ravel()
+        if hasattr(self._prox, 'gpuvars'):
+            self._prox.gpuvars['a'][:] = self._prox.a
+            self._prox.gpuvars['b'][:] = self._prox.b
         return self._prox

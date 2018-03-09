@@ -33,8 +33,8 @@ def main():
         test_adjoint(op)
         test_rowwise_lp(op)
 
-    lbd = 1.5
-    tau = 1.0
+    lbd = 1.3
+    tau = 0.7
     F = L1NormsConj(n_image, (l_labels, 1), lbd)
     Fprox = F.prox(tau)
     print("=> Testing %s" % type(Fprox))

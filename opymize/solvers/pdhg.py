@@ -16,6 +16,7 @@ class PDHG(object):
         self.itervars = { 'xk': self.g.x.new(), 'yk': self.f.x.new() }
         self.constvars = {}
         self.extravars = {}
+        self.use_gpu = False
 
     def obj_primal(self, x, Ax):
         obj, infeas = self.g(x)
@@ -42,14 +43,11 @@ class PDHG(object):
 
         p = ("*","[i]") if 'precond' in c else ("","")
         self.gpu_kernels = {
-            'step_primal': ElementwiseKernel(
-                "double *xkp1, double *xk, double %stau, double *xgradk" % p[0],
-                "xkp1[i] = xk[i] - tau%s*xgradk[i]" % p[1]),
-            'step_dual': ElementwiseKernel(
-                "double *ykp1, double *yk, double %ssigma, double *ygradk" % p[0],
-                "ykp1[i] = yk[i] + sigma%s*ygradk[i]" % p[1]),
+            'take_step': ElementwiseKernel(
+                "double *zkp1, double *zk, char direction, double %sstepsize, double *zgradk" % p[0],
+                "zkp1[i] = zk[i] + direction*stepsize%s*zgradk[i]" % p[1]),
             'overrelax': ElementwiseKernel(
-                "double *ygradbk, double *ygradkp1, double *ygradk, double theta",
+                "double *ygradbk, double theta, double *ygradkp1, double *ygradk",
                 "ygradbk[i] = (1 + theta)*ygradkp1[i] - theta*ygradk[i]"),
             'advance': ElementwiseKernel(
                 "double *zk, double *zkp1, double *zgradk, double *zgradkp1",
@@ -59,10 +57,6 @@ class PDHG(object):
                 map_expr="fabs((zk[i] - zkp1[i])/step - (zgradk[i] - zgradkp1[i]))",
                 arguments="double step, double *zk, double *zkp1, "\
                          +"double *zgradk, double *zgradkp1"),
-            'linop': self.linop,
-            'linop_adjoint': self.linop.adjoint,
-            'prox_primal': self.gprox,
-            'prox_dual': self.fconjprox,
         }
 
         self.gpu_itervars = {}
@@ -77,58 +71,44 @@ class PDHG(object):
                 continue
             self.gpu_constvars[name] = gpuarray.to_gpu(val)
 
+        self.use_gpu = True
         logging.info("CUDA kernels prepared for GPU")
 
-    def iteration_step_gpu(self):
-        i = self.itervars
-        c = self.constvars
-        gi = self.gpu_itervars
-        gc = self.gpu_constvars
-        gk = self.gpu_kernels
-        if 'precond' in c:
-            tau = gc['xtau']
-            sigma = gc['ysigma']
+    def take_step(self, zkp1, zk, direction, stepsize, zgradk):
+        if type(zkp1) is np.ndarray:
+            zkp1[:] = zk + direction*stepsize*zgradk
         else:
-            tau = i['tauk'] if 'adaptive' in c else c['tau']
-            sigma = i['sigmak'] if 'adaptive' in c else c['sigma']
+            self.gpu_kernels['take_step'](zkp1, zk, np.int8(direction), stepsize, zgradk)
 
-        # --- primals:
-        gk['step_primal'](gi['xkp1'], gi['xk'], tau, gi['xgradk'])
-        gk['prox_primal'](gi['xkp1'])
-        gk['linop'](gi['xkp1'], gi['ygradkp1'])
-        gk['overrelax'](gi['ygradbk'], gi['ygradkp1'], gi['ygradk'], c['theta'])
+    def overrelax(self, ygradbk, theta, ygradkp1, ygradk):
+        if type(ygradbk) is np.ndarray:
+            ygradbk[:] = (1 + theta)*ygradkp1 - theta*ygradk
+        else:
+            self.gpu_kernels['overrelax'](ygradbk, theta, ygradkp1, ygradk)
 
-        # --- duals:
-        gk['step_dual'](gi['ykp1'], gi['yk'], sigma, gi['ygradbk'])
-        gk['prox_dual'](gi['ykp1'])
-        gk['linop_adjoint'](gi['ykp1'], gi['xgradkp1'])
+    def residual(self, fact, zk, zkp1, zgradk, zgradkp1):
+        if type(zk) is np.ndarray:
+            return norm((zk - zkp1)/fact - (zgradk - zgradkp1), ord=1)
+        else:
+            return self.gpu_kernels['residual'](fact, zk, zkp1, zgradk, zgradkp1).get()
 
-        # --- step sizes:
-        if 'adaptive' in c and i['alphak'] > 1e-10:
-            i['res_pk'] = gk['residual'](i['tauk'],
-                gi['xk'], gi['xkp1'], gi['xgradk'], gi['xgradkp1']).get()
-            i['res_dk'] = gk['residual'](i['sigmak'],
-                gi['yk'], gi['ykp1'], gi['ygradk'], gi['ygradkp1']).get()
-
-            if i['res_pk'] > c['s']*i['res_dk']*c['Delta']:
-                i['tauk'] *= 1.0/(1.0 - i['alphak'])
-                i['sigmak'] *= (1.0 - i['alphak'])
-                i['alphak'] *= c['eta']
-            if i['res_pk'] < c['s']*i['res_dk']/c['Delta']:
-                i['tauk'] *= (1.0 - i['alphak'])
-                i['sigmak'] *= 1.0/(1.0 - i['alphak'])
-                i['alphak'] *= c['eta']
-
-        # --- update
-        gk['advance'](gi['xk'], gi['xkp1'], gi['xgradk'], gi['xgradkp1'])
-        gk['advance'](gi['yk'], gi['ykp1'], gi['ygradk'], gi['ygradkp1'])
+    def advance(self, zk, zkp1, zgradk, zgradkp1):
+        if type(zk) is np.ndarray:
+            zk[:], zgradk[:] = zkp1, zgradkp1
+        else:
+            self.gpu_kernels['advance'](zk, zkp1, zgradk, zgradkp1)
 
     def iteration_step(self):
+        v = self.gpu_itervars if self.use_gpu else self.itervars
+        xk, xkp1, xgradk, xgradkp1 = v['xk'], v['xkp1'], v['xgradk'], v['xgradkp1']
+        yk, ykp1, ygradk, ygradkp1 = v['yk'], v['ykp1'], v['ygradk'], v['ygradkp1']
+        ygradbk = v['ygradbk']
+
         i = self.itervars
         c = self.constvars
         if 'precond' in c:
-            tau = c['xtau']
-            sigma = c['ysigma']
+            tau = self.gpu_constvars['xtau'] if self.use_gpu else c['xtau']
+            sigma = self.gpu_constvars['ysigma'] if self.use_gpu else c['ysigma']
         elif 'adaptive' in c:
             tau = i['tauk']
             sigma = i['sigmak']
@@ -137,22 +117,20 @@ class PDHG(object):
             sigma = c['sigma']
 
         # --- primals:
-        i['xkp1'][:] = i['xk'] - tau*i['xgradk']
-        self.gprox(i['xkp1'], i['xkp1'])
-        self.linop(i['xkp1'], i['ygradkp1'])
-        i['ygradbk'][:] = (1 + c['theta'])*i['ygradkp1'] - c['theta']*i['ygradk']
+        self.take_step(xkp1, xk, -1, tau, xgradk)
+        self.gprox(xkp1)
+        self.linop(xkp1, ygradkp1)
+        self.overrelax(ygradbk, c['theta'], ygradkp1, ygradk)
 
         # --- duals:
-        i['ykp1'][:] = i['yk'] + sigma*i['ygradbk']
-        self.fconjprox(i['ykp1'], i['ykp1'])
-        self.linop.adjoint(i['ykp1'], i['xgradkp1'])
+        self.take_step(ykp1, yk, 1, sigma, ygradbk)
+        self.fconjprox(ykp1)
+        self.linop.adjoint(ykp1, xgradkp1)
 
         # --- step sizes:
         if 'adaptive' in c and i['alphak'] > 1e-10:
-            i['res_pk'] = norm((i['xk'][:] - i['xkp1'][:])/i['tauk']
-                               - (i['xgradk'][:] - i['xgradkp1'][:]), ord=1)
-            i['res_dk'] = norm((i['yk'][:] - i['ykp1'][:])/i['sigmak']
-                               - (i['ygradk'][:] - i['ygradkp1'][:]), ord=1)
+            i['res_pk'] = self.residual(tau, xk, xkp1, xgradk, xgradkp1)
+            i['res_dk'] = self.residual(sigma, yk, ykp1, ygradk, ygradkp1)
 
             if i['res_pk'] > c['s']*i['res_dk']*c['Delta']:
                 i['tauk'] *= 1.0/(1.0 - i['alphak'])
@@ -169,10 +147,8 @@ class PDHG(object):
                 self.fconjprox = self.f.conj.prox(i['sigmak'])
 
         # --- update
-        i['xk'][:] = i['xkp1']
-        i['xgradk'][:] = i['xgradkp1']
-        i['yk'][:] = i['ykp1']
-        i['ygradk'][:] = i['ygradkp1']
+        self.advance(xk, xkp1, xgradk, xgradkp1)
+        self.advance(yk, ykp1, ygradk, ygradkp1)
 
     def prepare_stepsizes(self, step_bound, step_factor, steps):
         i = self.itervars
@@ -225,13 +201,8 @@ class PDHG(object):
         if continue_at is not None:
             i['xk'][:], i['yk'][:] = continue_at
 
-        i['xkp1'] = i['xk'].copy()
-        i['xgradk'] = i['xk'].copy()
-        i['xgradkp1'] = i['xk'].copy()
-        i['ykp1'] = i['yk'].copy()
-        i['ygradk'] = i['yk'].copy()
-        i['ygradkp1'] = i['yk'].copy()
-        i['ygradbk'] = i['yk'].copy()
+        i.update([(s,i['xk'].copy()) for s in ['xkp1','xgradk','xgradkp1']])
+        i.update([(s,i['yk'].copy()) for s in ['ykp1','ygradk','ygradkp1','ygradbk']])
 
         self.linop(i['xk'], i['ygradk'])
         self.linop.adjoint(i['yk'], i['xgradk'])
@@ -242,19 +213,14 @@ class PDHG(object):
         obj_p = obj_d = infeas_p = infeas_d = relgap = 0.
         c['theta'] = 1.0 # overrelaxation
         self.prepare_stepsizes(step_bound, step_factor, steps)
-
-        if use_gpu:
-            self.prepare_gpu()
-            iteration_step = self.iteration_step_gpu
-        else:
-            iteration_step = self.iteration_step
+        if use_gpu: self.prepare_gpu()
 
         logging.info("Solving (steps<%d)..." % term_maxiter)
 
         with GracefulInterruptHandler() as interrupt_hdl:
             _iter = 0
             while _iter < term_maxiter:
-                iteration_step()
+                self.iteration_step()
                 _iter += 1
 
                 if interrupt_hdl.interrupted or _iter % granularity == 0:

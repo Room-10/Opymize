@@ -64,7 +64,14 @@ def main():
     linop = GradientOp(imagedims, l_labels)
 
     solver = PDHG(G, F, linop)
-    solver.solve(steps='precond', term_maxiter=5000, use_gpu=True)
+    solver.solve(steps='precond', term_maxiter=5000, granularity=500, use_gpu=True)
+
+    ## testing a new semismooth newton solver:
+    #result = np.concatenate(solver.state)
+    #from opymize.solvers import SemismoothNewton
+    #solver = SemismoothNewton(G, F, linop)
+    #solver.solve(continue_at=result)
+
     result = solver.state[0].reshape(data.shape)
     result = np.asarray(np.clip(result, 0, 255), dtype=np.uint8)
     if l_labels == 1:

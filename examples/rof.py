@@ -19,7 +19,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 logger.addHandler(ch)
 
-from opymize.solvers.pdhg import PDHG
+from opymize.solvers import PDHG
 from opymize.functionals import ConstrainFct, SSD, L1Norms
 from opymize.linear.diff import GradientOp
 
@@ -32,7 +32,10 @@ except ImportError:
     sys.exit()
 
 def main():
-    orig_data = imread("noisy.png")
+    input_file = "noisy.png"
+    output_file = "out.png"
+
+    orig_data = imread(input_file)
     m = np.array(orig_data.shape[:-1], dtype=np.int64)
     logging.info("Original size: %dx%d" % (m[0], m[1]))
 
@@ -66,7 +69,8 @@ def main():
     result = np.asarray(np.clip(result, 0, 255), dtype=np.uint8)
     if l_labels == 1:
         result = result[:,:,0]
-    imsave("out.png", result)
+    logging.info("Writing result to '%s'..." % output_file)
+    imsave(output_file, result)
 
 if __name__ == "__main__":
     main()

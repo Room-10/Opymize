@@ -76,11 +76,11 @@ def main(lbd=40.0, input_file=None, new_m=None):
     solver.solve(steps="precond", precision="double", use_gpu=True,
                  term_relgap=1e-5, term_maxiter=int(1e4), granularity=int(1e3))
 
-    ## testing a new semismooth newton solver:
+    ## testing a new semismooth (quasi-)newton solver:
     #pdhg_state = solver.state
     #result = np.concatenate(pdhg_state)
-    #from opymize.solvers import SemismoothNewton
-    #solver = SemismoothNewton(G, F, linop)
+    #from opymize.solvers import SemismoothQuasinewton
+    #solver = SemismoothQuasinewton(G, F, linop)
     #solver.solve(term_relgap=1e-10, continue_at=result)
     #
     ## for comparison: continue PDHG

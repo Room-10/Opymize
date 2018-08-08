@@ -8,6 +8,7 @@ import logging
 
 import numpy as np
 from numpy.linalg import norm
+import scipy
 
 def armijo(fun, xk, xkp1, p, p_gradf, fun_xk, eta=0.5, nu=0.9):
     """ Determine step size using backtracking
@@ -110,7 +111,7 @@ def CG_solve(A, b, xk, lbd=0, tmpvars=None, maxiter=int(1e3), tol=1e-5):
         rk[:] = rkp1
         if k % 2 == 0:
             normsq_r = np.einsum('i,i->', rkp1, rkp1)
-            logging.info("CG #{:03d}: {: 9.6g}".format(k, normsq_r))
+            logging.debug("CG #{:03d}: {: 9.6g}".format(k, normsq_r))
             if normsq_r < tol:
                 break
 
@@ -199,7 +200,7 @@ class SemismoothNewton(object):
         obj2, infeas2 = self.f.conj(y)
         return -obj - obj2, infeas + infeas2
 
-    def res(self, xy, xyres, subdiff=False):
+    def res(self, xy, xyres, subdiff=False, norm=True):
         c = self.constvars
         x, y = self.xy.vars(xy)
         xgrad, ygrad = self.xy.vars(xyres)
@@ -220,7 +221,8 @@ class SemismoothNewton(object):
             self.M.K = K
             self.M.H = H
 
-        return 0.5*np.einsum('i,i->', xyres, xyres)
+        if norm:
+            return 0.5*np.einsum('i,i->', xyres, xyres)
 
     def iteration_step(self, _iter):
         i = self.itervars
@@ -228,7 +230,6 @@ class SemismoothNewton(object):
 
         # Set up Newton system
         res_normsq = self.res(i['xyk'], i['xyres'], subdiff=True)
-        logging.info(res_normsq)
 
         # Solve modified Newton system using CG
         CG_solve(self.M, i['xyres'], i['dk'], lbd=self.lbd,
@@ -251,7 +252,7 @@ class SemismoothNewton(object):
             self.lbd *= self.lbd_drop
         elif rho < 0.25:
             self.lbd *= self.lbd_boost
-        logging.info("#{:6d}: alpha = {: 9.6g}, "\
+        logging.debug("#{:6d}: alpha = {: 9.6g}, "\
                      "rho = {: 9.6g}, lbd = {: 9.6g}"\
                      .format(_iter, alpha, rho, self.lbd))
         i['xyk'][:] = i['xykp1']
@@ -270,9 +271,15 @@ class SemismoothNewton(object):
         c['sigma'] = np.sqrt(bnd/fact)
         c['tau'] = bnd/c['sigma']
         logging.info("Constant steps: %f (%f | %f)" % (bnd,c['sigma'],c['tau']))
+        self.gprox = self.g.prox(c['tau'])
+        self.fconjprox = self.f.conj.prox(c['sigma'])
+        self.M = SemismoothNewtonSystem(self.linop, c['tau'], c['sigma'])
+        self.lbd = 1.0
+        self.lbd_drop = 0.1
+        self.lbd_boost = 5.0
 
-    def solve(self, continue_at=None, granularity=5,
-                    term_relgap=1e-5, term_infeas=None, term_maxiter=int(1e2)):
+    def solve(self, continue_at=None, granularity=50,
+                    term_relgap=1e-5, term_infeas=None, term_maxiter=int(5e2)):
         i = self.itervars
         c = self.constvars
 
@@ -291,12 +298,6 @@ class SemismoothNewton(object):
         xkp1, ykp1 = self.xy.vars(i['xykp1'])
 
         self.prepare_stepsizes()
-        self.gprox = self.g.prox(c['tau'])
-        self.fconjprox = self.f.conj.prox(c['sigma'])
-        self.M = SemismoothNewtonSystem(self.linop, c['tau'], c['sigma'])
-        self.lbd = 1.0
-        self.lbd_drop = 0.1
-        self.lbd_boost = 5.0
 
         if term_infeas is None:
             term_infeas = term_relgap
@@ -333,7 +334,8 @@ class SemismoothNewton(object):
                         relgap
                     ))
 
-                    if np.abs(relgap) < term_relgap and max(infeas_p, infeas_d) < term_infeas:
+                    if np.abs(relgap) < term_relgap \
+                       and max(infeas_p, infeas_d) < term_infeas:
                         break
 
                     if interrupt_hdl.interrupted:
@@ -350,3 +352,76 @@ class SemismoothNewton(object):
     @property
     def state(self):
         return self.xy.vars(self.itervars['xyk'])
+
+class SemismoothQuasinewton(SemismoothNewton):
+    def solve(self, continue_at=None, granularity=10,
+                    term_relgap=1e-5, term_infeas=None, term_maxiter=int(1e2)):
+        i = self.itervars
+        c = self.constvars
+
+        if continue_at is not None:
+            i['xyk'][:] = continue_at
+
+        i['xykp1'] = i['xyk'].copy()
+        i['xykres'] = i['xyk'].copy()
+
+        xk, yk = self.xy.vars(i['xyk'])
+        xkp1, ykp1 = self.xy.vars(i['xykp1'])
+
+        self.prepare_stepsizes()
+
+        def f(x):
+            self.res(x, i['xykres'], norm=False)
+            return i['xykres']
+
+        if term_infeas is None:
+            term_infeas = term_relgap
+
+        obj_p = obj_d = infeas_p = infeas_d = relgap = 0.
+
+        logging.info("Solving (steps<%d)..." % term_maxiter)
+
+        with GracefulInterruptHandler() as interrupt_hdl:
+            _iter = 0
+            while _iter < term_maxiter:
+                i['xykp1'][:] = i['xyk']
+                i['xyk'][:] = scipy.optimize.broyden1(f, i['xykp1'],
+                                                      iter=granularity)
+                _iter += granularity
+
+                if interrupt_hdl.interrupted or _iter % granularity == 0:
+                    if interrupt_hdl.interrupted:
+                        print("Interrupt (SIGINT) at iter=%d" % _iter)
+
+                    self.linop(xk, ykp1)
+                    self.linop.adjoint(yk, xkp1)
+                    obj_p, infeas_p = self.obj_primal(xk, ykp1)
+                    obj_d, infeas_d = self.obj_dual(xkp1, yk)
+
+                    # compute relative primal-dual gap
+                    relgap = (obj_p - obj_d) / max(np.spacing(1), obj_d)
+
+                    logging.info("#{:6d}: objp = {: 9.6g} ({: 9.6g}), " \
+                        "objd = {: 9.6g} ({: 9.6g}), " \
+                        "gap = {: 9.6g}, " \
+                        "relgap = {: 9.6g} ".format(
+                        _iter, obj_p, infeas_p,
+                        obj_d, infeas_d,
+                        obj_p - obj_d,
+                        relgap
+                    ))
+
+                    if np.abs(relgap) < term_relgap \
+                       and max(infeas_p, infeas_d) < term_infeas:
+                        break
+
+                    if interrupt_hdl.interrupted:
+                        break
+
+        return {
+            'objp': obj_p,
+            'objd': obj_d,
+            'infeasp': infeas_p,
+            'infeasd': infeas_d,
+            'relgap': relgap
+        }

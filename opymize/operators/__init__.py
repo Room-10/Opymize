@@ -12,8 +12,8 @@ class SplitOp(Operator):
         self.ops = ops
         self._call_cpu = self._call_gpu = self._call
 
-    def prepare_gpu(self):
-        [op.prepare_gpu() for op in self.ops]
+    def prepare_gpu(self, type_t="double"):
+        [op.prepare_gpu(type_t=type_t) for op in self.ops]
 
     def _call(self, x, y=None, add=False, jacobian=False):
         X = self.x.vars(x)

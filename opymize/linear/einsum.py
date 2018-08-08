@@ -30,7 +30,7 @@ class MatrixMult(LinOp):
             self.adjoint = adjoint
         self._kernel = None
 
-    def prepare_gpu(self):
+    def prepare_gpu(self, type_t="double"):
         if self._kernel is not None: return
         K, N = self.x[0]['shape']
         J, _ = self.y[0]['shape']
@@ -38,12 +38,14 @@ class MatrixMult(LinOp):
             'A': self.A,
             'J': J, 'K': K, 'N': N,
             'trans': 't' if self.trans else 'n',
-            'MATRIX_MULT': 1
+            'MATRIX_MULT': 1,
+            'TYPE_T': type_t
         }
+        fd = 1 if type_t == "double" else 2
         files = [resource_stream('opymize.linear', 'einsum.cu')]
-        templates = [("matrixmult", "PP", (J, N, 1), (32, 24, 1))]
+        templates = [("matrixmult", "PP", (J, N, 1), (fd*32, 24, 1))]
         self._kernel = prepare_kernels(files, templates, constvars)['matrixmult']
-        self.adjoint.prepare_gpu()
+        self.adjoint.prepare_gpu(type_t=type_t)
 
     def _call_gpu(self, x, y=None, add=False):
         assert y is not None
@@ -83,7 +85,7 @@ class MatrixMultR(LinOp):
             self.adjoint = adjoint
         self._kernel = None
 
-    def prepare_gpu(self):
+    def prepare_gpu(self, type_t="double"):
         if self._kernel is not None: return
         N, K = self.x[0]['shape']
         _, J = self.y[0]['shape']
@@ -91,10 +93,12 @@ class MatrixMultR(LinOp):
             'A': self.A,
             'J': J, 'K': K, 'N': N,
             'trans': 't' if self.trans else 'n',
-            'MATRIX_MULT_R': 1
+            'MATRIX_MULT_R': 1,
+            'TYPE_T': type_t
         }
+        fd = 1 if type_t == "double" else 2
         files = [resource_stream('opymize.linear', 'einsum.cu')]
-        templates = [("matrixmultr", "PP", (N, J, 1), (32, 24, 1))]
+        templates = [("matrixmultr", "PP", (N, J, 1), (fd*32, 24, 1))]
         self._kernel = prepare_kernels(files, templates, constvars)['matrixmultr']
         self.adjoint.prepare_gpu()
 
@@ -137,10 +141,10 @@ class DiagMatrixMultR(LinOp):
         self._kernel = None
         self.A_gpu = None
 
-    def prepare_gpu(self):
+    def prepare_gpu(self, type_t="double"):
         self.A_gpu = gpuarray.to_gpu(self.A)
         self._kernel_add = ElementwiseKernel(
-            "double *x, double *y, double *A",
+            "%s *x, %s *y, %s *A" % (type_t,type_t,type_t,),
             "y[i] += x[i]*A[i %% %d]" % self.A.size
         )
 
@@ -181,7 +185,7 @@ class TangledMatrixMultR(LinOp):
             self.adjoint = adjoint
         self._kernel = None
 
-    def prepare_gpu(self):
+    def prepare_gpu(self, type_t="double"):
         if self._kernel is not None: return
         J, N, L = self.x[0]['shape']
         M, _, K = self.y[0]['shape']
@@ -189,10 +193,12 @@ class TangledMatrixMultR(LinOp):
             'A': self.A,
             'J': J, 'K': K, 'L': L, 'M': M, 'N': N, 'MK': M*K,
             'trans': 't' if self.trans else 'n',
-            'TANGLED_MATRIX_MULT_R': 1
+            'TANGLED_MATRIX_MULT_R': 1,
+            'TYPE_T': type_t
         }
+        fd = 1 if type_t == "double" else 2
         files = [resource_stream('opymize.linear', 'einsum.cu')]
-        templates = [("tangledmatrixmultr", "PP", (N, M*K, 1), (32, 24, 1))]
+        templates = [("tangledmatrixmultr", "PP", (N, M*K, 1), (fd*32, 24, 1))]
         self._kernel = prepare_kernels(files, templates, constvars)['tangledmatrixmultr']
         self.adjoint.prepare_gpu()
 
@@ -232,7 +238,7 @@ class MatrixMultRBatched(LinOp):
             self.adjoint = adjoint
         self._kernel = None
 
-    def prepare_gpu(self):
+    def prepare_gpu(self, type_t="double"):
         if self._kernel is not None: return
         J, L, K = self.y[0]['shape']
         M = self.x[0]['shape'][2]
@@ -240,10 +246,12 @@ class MatrixMultRBatched(LinOp):
             'A': self.A,
             'J': J, 'K': K, 'L': L, 'M': M,
             'trans': 't' if self.trans else 'n',
-            'MATRIX_MULT_R_BATCHED': 1
+            'MATRIX_MULT_R_BATCHED': 1,
+            'TYPE_T': type_t
         }
+        fd = 1 if type_t == "double" else 2
         files = [resource_stream('opymize.linear', 'einsum.cu')]
-        templates = [("matrixmultrbatched", "PP", (J, L, K), (8, 16, 4))]
+        templates = [("matrixmultrbatched", "PP", (J, L, K), (8, fd*16, 4))]
         self._kernel = prepare_kernels(files, templates, constvars)['matrixmultrbatched']
         self.adjoint.prepare_gpu()
 

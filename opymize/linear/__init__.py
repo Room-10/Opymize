@@ -79,10 +79,10 @@ class BlockOp(LinOp):
             adj_bl.append([b[j].adjoint for b in self.blocks])
         self.adjoint = BlockOp(adj_bl, adjoint=self) if adjoint is None else adjoint
 
-    def prepare_gpu(self):
+    def prepare_gpu(self, type_t="double"):
         for i,Bi in enumerate(self.blocks):
             for j,Bij in enumerate(Bi):
-                Bij.prepare_gpu()
+                Bij.prepare_gpu(type_t=type_t)
 
     def _call(self, x, y=None, add=False):
         yy = x.copy() if y is None else y

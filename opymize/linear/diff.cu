@@ -34,7 +34,7 @@ __device__ int avgskip_allowed(int t, int *coords, int d) {
     return true;
 }
 
-__global__ void gradient(double *x, double *y)
+__global__ void gradient(TYPE_T *x, TYPE_T *y)
 {
     // y += D x (D is the gradient on a staggered grid with Neumann boundary)
 
@@ -48,10 +48,10 @@ __global__ void gradient(double *x, double *y)
 
     // iteration variable and misc.
     int aa, base;
-    double newval, fac;
+    TYPE_T newval, fac;
 
     newval = 0.0;
-    fac = weights[k]/(double)navgskips;
+    fac = weights[k]/(TYPE_T)navgskips;
 
     // skip points on "bottom right" boundary
     if (!is_br_boundary(i)) {
@@ -64,7 +64,7 @@ __global__ void gradient(double *x, double *y)
     y[i*dc_skip + t*C + k] += fac*newval;
 }
 
-__global__ void divergence(double *x, double *y)
+__global__ void divergence(TYPE_T *x, TYPE_T *y)
 {
     // y += D' x (D' = -div with Dirichlet boundary)
 
@@ -79,10 +79,10 @@ __global__ void divergence(double *x, double *y)
     // iteration variable and misc.
     int tt, aa, base, idx;
     int* coords = i2coords(i);
-    double newval, fac;
+    TYPE_T newval, fac;
 
     newval = 0.0;
-    fac = weights[k]/(double)navgskips;
+    fac = weights[k]/(TYPE_T)navgskips;
 
     for (tt = 0; tt < D; tt++) {
         idx = tt*C + k;

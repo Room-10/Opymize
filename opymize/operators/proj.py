@@ -22,10 +22,10 @@ class PosProj(Operator):
         self.y = Variable(N)
         self._jacobian = NihilOp(N, keep=self.x.new(dtype=bool))
 
-    def prepare_gpu(self):
-        self._kernel = ElementwiseKernel("double *x, double *y",
+    def prepare_gpu(self, type_t="double"):
+        self._kernel = ElementwiseKernel("%s *x, %s *y" % ((type_t,)*2),
             "y[i] = (x[i] < 0) ? 0 : x[i]")
-        self._kernel_add = ElementwiseKernel("double *x, double *y",
+        self._kernel_add = ElementwiseKernel("%s *x, %s *y" % ((type_t,)*2),
             "y[i] += (x[i] < 0) ? 0 : x[i]")
 
     def _call_gpu(self, x, y=None, add=False, jacobian=False):
@@ -55,10 +55,10 @@ class NegProj(Operator):
         self.y = Variable(N)
         self._jacobian = NihilOp(N, keep=self.x.new(dtype=bool))
 
-    def prepare_gpu(self):
-        self._kernel = ElementwiseKernel("double *x, double *y",
+    def prepare_gpu(self, type_t="double"):
+        self._kernel = ElementwiseKernel("%s *x, %S *y" % ((type_t,)*2),
             "y[i] = (x[i] > 0) ? 0 : x[i]")
-        self._kernel_add = ElementwiseKernel("double *x, double *y",
+        self._kernel_add = ElementwiseKernel("%s *x, %s *y" % ((type_t,)*2),
             "y[i] += (x[i] > 0) ? 0 : x[i]")
 
     def _call_gpu(self, x, y=None, add=False, jacobian=False):
@@ -182,14 +182,16 @@ class L1NormsProj(Operator):
         if matrixnorm == "frobenius":
             self._jacobian = L12ProjJacobian(self.N, self.M, self.lbd)
 
-    def prepare_gpu(self):
+    def prepare_gpu(self, type_t="double"):
         constvars = {
             'lbd': self.lbd,
             'N': self.N, 'M1': self.M[0], 'M2': self.M[1],
-            'matrixnorm': self.matrixnorm[0].upper()
+            'matrixnorm': self.matrixnorm[0].upper(),
+            'TYPE_T': type_t
         }
+        fd = 3 if type_t == "double" else 4
         files = [resource_stream('opymize.operators', 'proj.cu')]
-        templates = [("l1normsproj", "P", (self.N, 1, 1), (768, 1, 1))]
+        templates = [("l1normsproj", "P", (self.N, 1, 1), (fd*256, 1, 1))]
         self._kernel = prepare_kernels(files, templates, constvars)['l1normsproj']
 
     def _call_gpu(self, x, y=None, add=False, jacobian=False):

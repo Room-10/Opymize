@@ -1,5 +1,5 @@
 
-__global__ void l1normsproj(double *x)
+__global__ void l1normsproj(TYPE_T *x)
 {
     /* This function makes heavy use of registers (34 32-bit registers), so
      * that it will not run with more than 960 threads per block on compute
@@ -28,8 +28,8 @@ __global__ void l1normsproj(double *x)
 
     // iteration variables and misc.
     int mm;
-    double *xi = &x[i*(M1*M2)];
-    double norm = 0.0;
+    TYPE_T *xi = &x[i*(M1*M2)];
+    TYPE_T norm = 0.0;
 
 #if (M1 == 1 || M2 == 1 || matrixnorm == 'F')
     for (mm = 0; mm < M1*M2; mm++) {
@@ -43,7 +43,7 @@ __global__ void l1normsproj(double *x)
         }
     }
 #elif (M1 == 2 || M2 == 2)
-    double C11 = 0.0, C12 = 0.0, C22 = 0.0,
+    TYPE_T C11 = 0.0, C12 = 0.0, C22 = 0.0,
            V11 = 0.0, V12 = 0.0, V21 = 0.0, V22 = 0.0,
            M11 = 0.0, M12 = 0.0, M21 = 0.0, M22 = 0.0,
            s1 = 0.0, s2 = 0.0,

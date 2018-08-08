@@ -13,7 +13,7 @@ class PDHG(object):
         self.g = g
         self.f = f
         self.linop = A
-        self.itervars = { 'xk': self.g.x.new(), 'yk': self.f.x.new() }
+        self.itervars = {} # xk, yk, etc.
         self.constvars = {}
         self.use_gpu = False
 
@@ -27,7 +27,7 @@ class PDHG(object):
         obj2, infeas2 = self.f.conj(y)
         return -obj - obj2, infeas + infeas2
 
-    def prepare_gpu(self):
+    def prepare_gpu(self, type_t="double"):
         import opymize.tools.gpu # gpu init
         from pycuda import gpuarray
         from pycuda.elementwise import ElementwiseKernel
@@ -36,26 +36,29 @@ class PDHG(object):
         i = self.itervars
         c = self.constvars
 
-        self.gprox.prepare_gpu()
-        self.fconjprox.prepare_gpu()
-        self.linop.prepare_gpu()
+        self.gprox.prepare_gpu(type_t=type_t)
+        self.fconjprox.prepare_gpu(type_t=type_t)
+        self.linop.prepare_gpu(type_t=type_t)
 
         p = ("*","[i]") if 'precond' in c else ("","")
         self.gpu_kernels = {
             'take_step': ElementwiseKernel(
-                "double *zkp1, double *zk, char direction, double %sstepsize, double *zgradk" % p[0],
+                "%s *zkp1, %s *zk, char direction, %s %sstepsize, %s *zgradk" \
+                    % (type_t, type_t, type_t, p[0], type_t),
                 "zkp1[i] = zk[i] + direction*stepsize%s*zgradk[i]" % p[1]),
             'overrelax': ElementwiseKernel(
-                "double *ygradbk, double theta, double *ygradkp1, double *ygradk",
+                "%s *ygradbk, %s theta, %s *ygradkp1, %s *ygradk" \
+                    % (type_t, type_t, type_t, type_t),
                 "ygradbk[i] = (1 + theta)*ygradkp1[i] - theta*ygradk[i]"),
             'advance': ElementwiseKernel(
-                "double *zk, double *zkp1, double *zgradk, double *zgradkp1",
+                "%s *zk, %s *zkp1, %s *zgradk, %s *zgradkp1" \
+                    % (type_t, type_t, type_t, type_t),
                 "zk[i] = zkp1[i]; zgradk[i] = zgradkp1[i]"),
             'residual': 0 if 'adaptive' not in c else ReductionKernel(
                 np.float64, neutral="0", reduce_expr="a+b",
                 map_expr="fabs((zk[i] - zkp1[i])/step - (zgradk[i] - zgradkp1[i]))",
-                arguments="double step, double *zk, double *zkp1, "\
-                         +"double *zgradk, double *zgradkp1"),
+                arguments="%s step, %s *zk, %s *zkp1, %s *zgradk, %s *zgradkp1"\
+                            % (type_t, type_t, type_t, type_t, type_t)),
         }
 
         self.gpu_itervars = {}
@@ -191,11 +194,16 @@ class PDHG(object):
                              % (bnd,c['sigma'],c['tau']))
 
 
-    def solve(self, continue_at=None, step_bound=None, step_factor=1.0,
+    def solve(self, continue_at=None, precision="double",
+                    steps="const", step_bound=None, step_factor=1.0,
                     term_relgap=1e-5, term_infeas=None, term_maxiter=int(5e4),
-                    granularity=5000, use_gpu=True, steps="const"):
+                    granularity=5000, use_gpu=True):
         i = self.itervars
         c = self.constvars
+
+        dtype = np.float64 if precision == "double" else np.float32
+        i['xk'] = self.g.x.new(dtype=dtype)
+        i['yk'] = self.f.x.new(dtype=dtype)
 
         if continue_at is not None:
             i['xk'][:], i['yk'][:] = continue_at
@@ -212,7 +220,7 @@ class PDHG(object):
         obj_p = obj_d = infeas_p = infeas_d = relgap = 0.
         c['theta'] = 1.0 # overrelaxation
         self.prepare_stepsizes(step_bound, step_factor, steps)
-        if use_gpu: self.prepare_gpu()
+        if use_gpu: self.prepare_gpu(type_t=precision)
 
         logging.info("Solving (steps<%d)..." % term_maxiter)
 

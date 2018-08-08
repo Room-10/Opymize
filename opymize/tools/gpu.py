@@ -85,7 +85,10 @@ def prepare_vars(constvars, blockvars):
 
     for name, val in constvars.items():
         if type(val) is str:
-            preamble += "#define %s ('%s')\n" % (name, val)
+            if len(val) == 1:
+                preamble += "#define %s ('%s')\n" % (name, val)
+            else:
+                preamble += "#define %s %s\n" % (name, val)
         elif type(val) is int or type(val) is np.int64:
             preamble += "#define %s (%d)\n" % (name, val)
         elif type(val) is bool:

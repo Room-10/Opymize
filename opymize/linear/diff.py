@@ -126,7 +126,7 @@ def staggered_diff(x, y, b, avgskips, imagedims, adjoint=False, precond=False):
                     else:
                         break
 
-def diff_prepare_gpu(imagedims, C, weights):
+def diff_prepare_gpu(imagedims, C, weights, type_t="double"):
     N = np.prod(imagedims)
     D = len(imagedims)
     skips = (1,)
@@ -138,12 +138,14 @@ def diff_prepare_gpu(imagedims, C, weights):
         'imagedims': np.array(imagedims, dtype=np.int64, order='C'),
         'avgskips': staggered_diff_avgskips(imagedims),
         'navgskips': 1 << (D - 1),
-        'weights': weights
+        'weights': weights,
+        'TYPE_T': type_t
     }
     files = [resource_stream('opymize.linear', 'diff.cu')]
+    fd = 4 if type_t == "double" else 5
     templates = [
-        ("gradient", "PP", (N, C, D), (24, 16, 2)),
-        ("divergence", "PP", (N, C, 1), (32, 24, 1)),
+        ("gradient", "PP", (N, C, D), (fd*6, 16, 2)),
+        ("divergence", "PP", (N, C, 1), (fd*8, 24, 1)),
     ]
     return prepare_kernels(files, templates, constvars)
 
@@ -166,12 +168,13 @@ class GradientOp(LinOp):
         else:
             self.adjoint = adjoint
 
-    def prepare_gpu(self, kernels=None):
+    def prepare_gpu(self, kernels=None, type_t="double"):
         if self._kernels is not None: return
         if kernels is None:
-            kernels = diff_prepare_gpu(self.imagedims, self.C, self.weights)
+            kernels = diff_prepare_gpu(self.imagedims, self.C, self.weights,
+                                       type_t=type_t)
         self._kernels = kernels
-        self.adjoint.prepare_gpu(kernels)
+        self.adjoint.prepare_gpu(kernels, type_t=type_t)
 
     def _call_gpu(self, x, y=None, add=False):
         assert y is not None
@@ -211,12 +214,13 @@ class DivergenceOp(LinOp):
         else:
             self.adjoint = adjoint
 
-    def prepare_gpu(self, kernels=None):
+    def prepare_gpu(self, kernels=None, type_t="double"):
         if self._kernels is not None: return
         if kernels is None:
-            kernels = diff_prepare_gpu(self.imagedims, self.C, self.weights)
+            kernels = diff_prepare_gpu(self.imagedims, self.C, self.weights,
+                                       type_t=type_t)
         self._kernels = kernels
-        self.adjoint.prepare_gpu(kernels)
+        self.adjoint.prepare_gpu(kernels, type_t=type_t)
 
     def _call_gpu(self, x, y=None, add=False):
         assert y is not None

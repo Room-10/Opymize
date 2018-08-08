@@ -1,6 +1,6 @@
 
 #ifdef MATRIX_MULT
-__global__ void matrixmult(double *x, double *y)
+__global__ void matrixmult(TYPE_T *x, TYPE_T *y)
 {
     /* y_ji = \sum_k A_jk * x_ki */
 
@@ -13,7 +13,7 @@ __global__ void matrixmult(double *x, double *y)
 
     // iteration variables and misc.
     int kk, idx;
-    double newval;
+    TYPE_T newval;
 
     idx = j*N + i;
     newval = y[idx];
@@ -29,7 +29,7 @@ __global__ void matrixmult(double *x, double *y)
 #endif
 
 #ifdef MATRIX_MULT_R
-__global__ void matrixmultr(double *x, double *y)
+__global__ void matrixmultr(TYPE_T *x, TYPE_T *y)
 {
     /* y_ij = \sum_k x_ik * A_kj */
 
@@ -42,7 +42,7 @@ __global__ void matrixmultr(double *x, double *y)
 
     // iteration variables and misc.
     int kk, idx;
-    double newval;
+    TYPE_T newval;
 
     idx = i*J + j;
     newval = y[idx];
@@ -58,7 +58,7 @@ __global__ void matrixmultr(double *x, double *y)
 #endif
 
 #ifdef MATRIX_MULT_R_BATCHED
-__global__ void matrixmultrbatched(double *x, double *y)
+__global__ void matrixmultrbatched(TYPE_T *x, TYPE_T *y)
 {
     /* y_jlk = \sum_m x_jlm * A_jmk */
 
@@ -72,7 +72,7 @@ __global__ void matrixmultrbatched(double *x, double *y)
 
     // iteration variables and misc.
     int mm, idx;
-    double newval;
+    TYPE_T newval;
 
     idx = j*(L*K) + l*K + k;
     newval = y[idx];
@@ -88,7 +88,7 @@ __global__ void matrixmultrbatched(double *x, double *y)
 #endif
 
 #ifdef TANGLED_MATRIX_MULT_R
-__global__ void tangledmatrixmultr(double *x, double *y)
+__global__ void tangledmatrixmultr(TYPE_T *x, TYPE_T *y)
 {
     /* y_mik = \sum_jl x_jil * A_jlmk */
 
@@ -105,7 +105,7 @@ __global__ void tangledmatrixmultr(double *x, double *y)
 
     // iteration variables and misc.
     int jj, ll, idx;
-    double newval;
+    TYPE_T newval;
 
     idx = m*(N*K) + i*K + k;
     newval = y[idx];

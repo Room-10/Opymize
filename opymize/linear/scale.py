@@ -41,11 +41,13 @@ class ScaleOp(LinOp):
         self.adjoint = self
         self.fact = fact
 
-    def prepare_gpu(self):
-        self.fact_gpu = gpuarray.to_gpu(np.asarray(self.fact, dtype=np.float64))
+    def prepare_gpu(self, type_t="double"):
+        dtype = np.float64 if type_t == "double" else np.float32
+        self.fact_gpu = gpuarray.to_gpu(np.asarray(self.fact, dtype=dtype))
         fact = "[i]" if type(self.fact) is np.ndarray else "[0]"
         self._kernel_add = ElementwiseKernel(
-            "double *x, double *y, double *fact", "y[i] += fact%s*x[i]" % fact
+            "%s *x, %s *y, %s *fact" % (type_t, type_t, type_t),
+            "y[i] += fact%s*x[i]" %  (fact,)
         )
 
     def _call_gpu(self, x, y=None, add=False):

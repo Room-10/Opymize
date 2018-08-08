@@ -31,31 +31,40 @@ except ImportError:
     print("This example requires `scikit-image` to run!")
     sys.exit()
 
-def main():
-    input_file = "noisy.png"
-    output_file = "out.png"
+def main(lbd=40.0, input_file=None, new_m=None):
+    if input_file is None:
+        from skimage.data import astronaut
+        orig_data = np.array(astronaut(), dtype=np.float64)
+        orig_data += np.sqrt(lbd)*np.random.randn(*orig_data.shape)
+        output_file = "astronaut-%.1f.png" % (lbd,)
+    else:
+        input_base, _, input_ext = input_file.rpartition(".")
+        output_file = "%s-%.1f.%s" % (input_base, lbd, input_ext)
+        orig_data = imread(input_file)
 
-    orig_data = imread(input_file)
     m = np.array(orig_data.shape[:-1], dtype=np.int64)
-    logging.info("Original size: %dx%d" % (m[0], m[1]))
+    logging.info("Image size: %dx%d" % (m[0], m[1]))
 
-    new_m = np.array([400, 400], dtype=np.int64)
-    lbd = 40
-    logging.info("Goal: Embed into %dx%d using ROF (lbd=%.1f) inpainting" \
-                 % (new_m[0], new_m[1], lbd))
-
-    padding = (new_m - m)//2
-    data = np.zeros((new_m[0],new_m[1],3), order='C', dtype=np.float64)
-    data[padding[0]:padding[0]+m[0],padding[1]:padding[1]+m[1],:] = orig_data
+    if new_m is not None:
+        new_m = np.array(new_m, dtype=np.int64).ravel()
+        assert(new_m.shape == (2,))
+        logging.info("Goal: Embed into %dx%d using ROF (lbd=%.1f) inpainting" \
+                     % (new_m[0], new_m[1], lbd))
+        pad = (new_m - m)//2
+        data = np.zeros((new_m[0],new_m[1],3), order='C', dtype=np.float64)
+        data[pad[0]:pad[0]+m[0],pad[1]:pad[1]+m[1],:] = orig_data
+        mask = np.zeros(new_m, order='C', dtype=bool)
+        mask[pad[0]:pad[0]+m[0],pad[1]:pad[1]+m[1]] = True
+        mask = mask.ravel()
+    else:
+        logging.info("Goal: Denoise using ROF (lbd=%.1f)" % (lbd,))
+        data = np.array(orig_data, dtype=np.float64)
+        mask = None
 
     imagedims = data.shape[:-1]
     n_image = np.prod(imagedims)
     d_image = len(imagedims)
     l_labels = data.shape[-1]
-
-    mask = np.zeros(imagedims, order='C', dtype=bool)
-    mask[padding[0]:padding[0]+m[0],padding[1]:padding[1]+m[1]] = True
-    mask = mask.ravel()
 
     G = SSD(data.reshape(-1, l_labels), mask=mask)
     # alternatively constrain to the input data:
@@ -64,13 +73,20 @@ def main():
     linop = GradientOp(imagedims, l_labels)
 
     solver = PDHG(G, F, linop)
-    solver.solve(steps='precond', term_maxiter=5000, granularity=500, use_gpu=True)
+    solver.solve(steps="precond", precision="double", use_gpu=True,
+                 term_relgap=1e-5, term_maxiter=int(1e4), granularity=int(1e3))
 
     ## testing a new semismooth newton solver:
-    #result = np.concatenate(solver.state)
+    #pdhg_state = solver.state
+    #result = np.concatenate(pdhg_state)
     #from opymize.solvers import SemismoothNewton
     #solver = SemismoothNewton(G, F, linop)
-    #solver.solve(continue_at=result)
+    #solver.solve(term_relgap=1e-10, continue_at=result)
+    #
+    ## for comparison: continue PDHG
+    #solver = PDHG(G, F, linop)
+    #solver.solve(steps='precond', term_maxiter=5000, granularity=500,
+    #             term_relgap=1e-10, use_gpu=True, continue_at=pdhg_state)
 
     result = solver.state[0].reshape(data.shape)
     result = np.asarray(np.clip(result, 0, 255), dtype=np.uint8)
@@ -80,4 +96,10 @@ def main():
     imsave(output_file, result)
 
 if __name__ == "__main__":
-    main()
+    lbd = 100.0
+    input_file = None
+    if len(sys.argv) > 1:
+        input_file = np.float64(sys.argv[1])
+        if len(sys.argv) > 2:
+            lbd = np.float64(sys.argv[2])
+    main(lbd=lbd, input_file=input_file)

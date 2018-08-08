@@ -21,9 +21,9 @@ class ConstOp(Operator):
         self.const = const
         self._jacobian = ZeroOp(self.x.size, self.y.size)
 
-    def prepare_gpu(self):
+    def prepare_gpu(self, type_t="double"):
         self.gpu_const = gpuarray.to_gpu(self.const)
-        self._jacobian.prepare_gpu()
+        self._jacobian.prepare_gpu(type_t=type_t)
 
     def _call_gpu(self, x, y=None, add=False, jacobian=False):
         y = x if y is None else y
@@ -55,16 +55,16 @@ class ConstrainOp(Operator):
         scale[mask,:] = 0.0
         self._jacobian = ScaleOp(self.x.size, scale.ravel())
 
-    def prepare_gpu(self):
+    def prepare_gpu(self, type_t="double"):
         self.const_gpu = gpuarray.to_gpu(self.const)
         self.mask_gpu = gpuarray.to_gpu(self.mask.astype(np.int8))
         N, M = self.x[0]['shape']
-        headstr = "double *x, double *y, double *c, char *mask"
+        headstr = "%s *x, %s *y, %s *c, char *mask" % ((type_t,)*3)
         self._kernel = ElementwiseKernel(headstr,
             "y[i] = (mask[i/{}]) ? c[i] : x[i]".format(M))
         self._kernel_add = ElementwiseKernel(headstr,
             "y[i] += (mask[i/{}]) ? c[i] : x[i]".format(M))
-        self._jacobian.prepare_gpu()
+        self._jacobian.prepare_gpu(type_t=type_t)
 
     def _call_gpu(self, x, y=None, add=False, jacobian=False):
         y = x if y is None else y
@@ -93,7 +93,7 @@ class ShiftScaleOp(Operator):
         self.y = Variable(N)
         self._jacobian = ScaleOp(N, self.a)
 
-    def prepare_gpu(self):
+    def prepare_gpu(self, type_t="double"):
         # don't multiply with a if a is 1 (not 1.0!)
         afact = "" if self.a is 1 else "a[0]*"
         if type(self.a) is np.ndarray:
@@ -110,12 +110,13 @@ class ShiftScaleOp(Operator):
         if self.shift is 0 or self.b is 0:
             shiftstr = ""
 
+        dt = np.float64 if type_t == "double" else np.float32
         self.gpuvars = {
-            'shift':    gpuarray.to_gpu(np.array(self.shift, dtype=np.float64, ndmin=1)),
-            'a':        gpuarray.to_gpu(np.array(self.a, dtype=np.float64, ndmin=1)),
-            'b':        gpuarray.to_gpu(np.array(self.b, dtype=np.float64, ndmin=1))
+            'shift':    gpuarray.to_gpu(np.array(self.shift, dtype=dt, ndmin=1)),
+            'a':        gpuarray.to_gpu(np.array(self.a, dtype=dt, ndmin=1)),
+            'b':        gpuarray.to_gpu(np.array(self.b, dtype=dt, ndmin=1))
         }
-        headstr = "double *x, double *y, double *shift, double *a, double *b"
+        headstr = "%s *x, %s *y, %s *shift, %s *a, %s *b" % ((type_t,)*5)
         self._kernel = ElementwiseKernel(headstr,
             "y[i] = %s(x[i]%s)" % (afact, shiftstr))
         self._kernel_add = ElementwiseKernel(headstr,

@@ -9,6 +9,7 @@ import logging
 import numpy as np
 from numpy.linalg import norm
 import scipy
+import scipy.sparse.linalg
 
 def armijo(fun, xk, xkp1, p, p_gradf, fun_xk, eta=0.5, nu=0.9):
     """ Determine step size using backtracking
@@ -114,6 +115,71 @@ def CG_solve(A, b, xk, lbd=0, tmpvars=None, maxiter=int(1e3), tol=1e-5):
             logging.debug("CG #{:03d}: {: 9.6g}".format(k, normsq_r))
             if normsq_r < tol:
                 break
+
+def scipy_linop(M):
+    def matvec(x):
+        y = M.y.new()
+        M(x, y)
+        return y
+
+    def rmatvec(y):
+        x = M.x.new()
+        M.adjoint(y, x)
+        return x
+
+    return scipy.sparse.linalg.LinearOperator((M.y.size, M.x.size),
+                                              matvec=matvec,
+                                              rmatvec=rmatvec)
+
+def scipy_solve(A, b, xk, lbd=None, tmpvars=None, maxiter=int(1e3), tol=1e-5,
+                solver=scipy.sparse.linalg.bicgstab):
+    """ Solve Ax + b = 0 using Scipy
+
+    Args:
+        A : linear operator
+        b : RHS of linear equation
+        xk : initial value and where the result is stored
+        lbd : if not `None`, solve  (A^T*A + lbd*Id)*x = -A^T*b
+        tmpvars : tuple (rk, rkp1, z, dk) for internal temporary variables
+        maxiter : termination criterion (max. number of steps)
+        tol : termination criterion (min. precision)
+        solver : the scipy solver, one of
+            scipy.sparse.linalg.bicgstab
+            scipy.sparse.linalg.gmres
+            scipy.sparse.linalg.lsqr
+
+    Returns:
+        Nothing, the result is written to `xk`
+    """
+    if tmpvars is not None:
+        rk, rkp1, z, dk = tmpvars
+    else:
+        rk, rkp1, z, dk = [xk.copy() for i in range(4)]
+
+    if solver == scipy.sparse.linalg.lsqr:
+        A(xk, dk)
+        rk[:] = -b
+        rkp1[:] = b - dk
+        kwparams = {
+            # FIXME experimental
+            'atol': np.sqrt(tol) * np.linalg.norm(rk) / np.linalg.norm(rkp1),
+            'btol': np.sqrt(tol),
+            'damp': lbd,
+        }
+        A_scipy = scipy_linop(A)
+    else:
+        kwparams = { 'tol': np.sqrt(tol), }
+        if lbd is not None:
+            ATb = z
+            modA = SymRegOp(A, lbd=lbd, tmp=rkp1)
+            A.adjoint(b, ATb)
+            rk[:] = -ATb
+            A_scipy = scipy_linop(modA)
+        else:
+            rk[:] = -b
+            A_scipy = scipy_linop(A)
+
+    xk[:] = solver(A_scipy, rk, x0=xk, **kwparams)[0]
 
 class SemismoothNewtonSystem(LinOp):
     """ Block matrix of the following form:
@@ -224,17 +290,24 @@ class SemismoothNewton(object):
         if norm:
             return 0.5*np.einsum('i,i->', xyres, xyres)
 
-    def iteration_step(self, _iter):
+    def iteration_step(self, _iter, use_scipy=False):
         i = self.itervars
         c = self.constvars
 
         # Set up Newton system
         res_normsq = self.res(i['xyk'], i['xyres'], subdiff=True)
 
-        # Solve modified Newton system using CG
-        CG_solve(self.M, i['xyres'], i['dk'], lbd=self.lbd,
-                 tmpvars=(i['cg_rk'], i['cg_rkp1'], i['xytmp'], i['cg_dk']),
-                 tol=res_normsq)
+        # Solve modified Newton system
+        logging.info('Start linsolve')
+        if use_scipy:
+            scipy_solve(self.M, i['xyres'], i['dk'], lbd=self.lbd,
+                        tmpvars=(i['cg_rk'], i['cg_rkp1'], i['xytmp'], i['cg_dk']),
+                        tol=res_normsq, solver=scipy.sparse.linalg.lsqr)
+        else:
+            CG_solve(self.M, i['xyres'], i['dk'], lbd=self.lbd,
+                     tmpvars=(i['cg_rk'], i['cg_rkp1'], i['xytmp'], i['cg_dk']),
+                     tol=res_normsq)
+        logging.info('Stop linsolve')
 
         # Armijo backtracking
         self.M(i['dk'], i['xytmp'])
@@ -253,8 +326,8 @@ class SemismoothNewton(object):
         elif rho < 0.25:
             self.lbd *= self.lbd_boost
         logging.debug("#{:6d}: alpha = {: 9.6g}, "\
-                     "rho = {: 9.6g}, lbd = {: 9.6g}"\
-                     .format(_iter, alpha, rho, self.lbd))
+                     "rho = {: 9.6g}, lbd = {: 9.6g}, normsq = {: 9.6g}"\
+                     .format(_iter, alpha, rho, self.lbd, res_normsq))
         i['xyk'][:] = i['xykp1']
 
     def prepare_stepsizes(self):

@@ -97,6 +97,10 @@ def prepare_vars(constvars, blockvars):
             preamble += "__constant__ double %s = %s;\n" % (name, repr(val))
         elif type(val) is np.ndarray:
             if val.dtype == 'int64':
+                preamble += "__constant__ long %s[%d] = { %s };\n" % (
+                    name, val.size,
+                    ", ".join(str(i) for i in val.ravel()))
+            elif val.dtype == 'int32':
                 preamble += "__constant__ int %s[%d] = { %s };\n" % (
                     name, val.size,
                     ", ".join(str(i) for i in val.ravel()))
@@ -104,6 +108,9 @@ def prepare_vars(constvars, blockvars):
                 preamble += "__constant__ unsigned char %s[%d] = { %s };\n" % (
                     name, val.size,
                     ", ".join(str(int(i)) for i in val.ravel()))
+            elif val.dtype == 'float32':
+                preamble += "__device__ float %s[%d];\n" % (name, val.size)
+                new_constvars[name] = val
             elif val.dtype == 'float64':
                 preamble += "__device__ double %s[%d];\n" % (name, val.size)
                 new_constvars[name] = val

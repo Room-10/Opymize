@@ -65,14 +65,17 @@ def test_rowwise_lp(op, p=1, maxiter=10):
         assert(np.abs(y[i] - np.sum(np.abs(Ai)**p)) < 1e-10)
     print("rowwise l^p tested successfully")
 
-def test_gpu_op(op):
+def test_gpu_op(op, type_t="double"):
     import opymize.tools.gpu
     from pycuda import gpuarray
 
-    x, Ax = [np.random.randn(v.size) for v in [op.x, op.y]]
+    np_dtype = np.float64 if type_t == "double" else np.float32
+    x, Ax = op.x.new(dtype=np_dtype), op.y.new(dtype=np_dtype)
+
+    x[:], Ax[:] = [np.random.randn(v.size) for v in [op.x, op.y]]
     x_gpu, Ax_gpu = [gpuarray.to_gpu(v) for v in [x, Ax]]
 
-    op.prepare_gpu()
+    op.prepare_gpu(type_t=type_t)
     op(x, Ax)
     op(x_gpu, Ax_gpu)
 
@@ -82,5 +85,6 @@ def test_gpu_op(op):
 def compare_vars(descr, v1, v2):
     for i,(v1i,v2i) in enumerate(zip(descr.vars(v1), descr.vars(v2))):
         print("Testing i=%d ... " % i, end="")
-        assert np.allclose(v1i, v2i)
+        if not np.allclose(v1i, v2i):
+            raise Exception("Mismatch: %e" % np.amax(np.abs(v1i-v2i)))
         print("successful!")

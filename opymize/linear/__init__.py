@@ -1,6 +1,7 @@
 
 from opymize import Variable, Operator
 from opymize.linear.diff import GradientOp, DivergenceOp
+from opymize.linear.indexed import *
 from opymize.linear.einsum import *
 from opymize.linear.scale import *
 

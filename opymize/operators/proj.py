@@ -121,9 +121,9 @@ def spectral_projection_2d(x, lbd):
         nothing, the result is stored in place!
     """
     N, M1, M2 = x.shape
-    V = np.empty((2,2))
-    C = np.empty((2,2))
-    S = np.zeros((2,2))
+    V = np.empty((2,2), dtype=x.dtype)
+    C = np.empty((2,2), dtype=x.dtype)
+    S = np.zeros((2,2), dtype=x.dtype)
     for i in range(N):
         if M2 == 2:
             A = x[i]
@@ -187,11 +187,12 @@ class L1NormsProj(Operator):
             'lbd': self.lbd,
             'N': self.N, 'M1': self.M[0], 'M2': self.M[1],
             'matrixnorm': self.matrixnorm[0].upper(),
-            'TYPE_T': type_t
+            'TYPE_T': type_t,
         }
-        fd = 3 if type_t == "double" else 4
+        for f in ['fmin','fmax','sqrt','hypot']:
+            constvars[f.upper()] = f if type_t == "double" else (f+"f")
         files = [resource_stream('opymize.operators', 'proj.cu')]
-        templates = [("l1normsproj", "P", (self.N, 1, 1), (fd*256, 1, 1))]
+        templates = [("l1normsproj", "P", (self.N, 1, 1), (640, 1, 1))]
         self._kernel = prepare_kernels(files, templates, constvars)['l1normsproj']
 
     def _call_gpu(self, x, y=None, add=False, jacobian=False):

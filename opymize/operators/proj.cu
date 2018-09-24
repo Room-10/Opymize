@@ -23,8 +23,7 @@ __global__ void l1normsproj(TYPE_T *x)
     int i = blockIdx.x*blockDim.x + threadIdx.x;
 
     // stay inside maximum dimensions
-    if (i >= N)
-       return;
+    if (i >= N) return;
 
     // iteration variables and misc.
     int mm;
@@ -37,7 +36,7 @@ __global__ void l1normsproj(TYPE_T *x)
     }
 
     if (norm > lbd*lbd) {
-        norm = lbd/sqrt(norm);
+        norm = lbd/SQRT(norm);
         for (mm = 0; mm < M1*M2; mm++) {
             xi[mm] *= norm;
         }
@@ -58,11 +57,11 @@ __global__ void l1normsproj(TYPE_T *x)
 
     // Compute eigenvalues
     trace = C11 + C22;
-    d = sqrt(fmax(0.0, 0.25*trace*trace - (C11*C22 - C12*C12)));
-    lmax = fmax(0.0, 0.5*trace + d);
-    lmin = fmax(0.0, 0.5*trace - d);
-    smax = sqrt(lmax);
-    smin = sqrt(lmin);
+    d = SQRT(FMAX(0.0, 0.25*trace*trace - (C11*C22 - C12*C12)));
+    lmax = FMAX(0.0, 0.5*trace + d);
+    lmin = FMAX(0.0, 0.5*trace - d);
+    smax = SQRT(lmax);
+    smin = SQRT(lmin);
 
     if (smax > lbd) {
         // Compute orthonormal eigenvectors
@@ -77,15 +76,15 @@ __global__ void l1normsproj(TYPE_T *x)
         } else {
             V11 = C12       ; V12 = C12;
             V21 = lmax - C11; V22 = lmin - C11;
-            norm = hypot(V11, V21);
+            norm = HYPOT(V11, V21);
             V11 /= norm; V21 /= norm;
-            norm = hypot(V12, V22);
+            norm = HYPOT(V12, V22);
             V12 /= norm; V22 /= norm;
         }
 
         // Thresholding of eigenvalues
-        s1 = fmin(smax, lbd)/smax;
-        s2 = fmin(smin, lbd);
+        s1 = FMIN(smax, lbd)/smax;
+        s2 = FMIN(smin, lbd);
         s2 = (smin > 0.0) ? s2/smin : 0.0;
 
         // M = V * diag(s) * V^T

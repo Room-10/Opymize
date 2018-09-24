@@ -98,7 +98,7 @@ class MatrixMultR(LinOp):
         files = [resource_stream('opymize.linear', 'einsum.cu')]
         templates = [("matrixmultr", "PP", (N, J, 1), (32, 24, 1))]
         self._kernel = prepare_kernels(files, templates, constvars)['matrixmultr']
-        self.adjoint.prepare_gpu()
+        self.adjoint.prepare_gpu(type_t=type_t)
 
     def _call_gpu(self, x, y=None, add=False):
         assert y is not None
@@ -197,7 +197,7 @@ class TangledMatrixMultR(LinOp):
         files = [resource_stream('opymize.linear', 'einsum.cu')]
         templates = [("tangledmatrixmultr", "PP", (N, M*K, 1), (32, 24, 1))]
         self._kernel = prepare_kernels(files, templates, constvars)['tangledmatrixmultr']
-        self.adjoint.prepare_gpu()
+        self.adjoint.prepare_gpu(type_t=type_t)
 
     def _call_gpu(self, x, y=None, add=False):
         assert y is not None
@@ -249,7 +249,7 @@ class MatrixMultRBatched(LinOp):
         files = [resource_stream('opymize.linear', 'einsum.cu')]
         templates = [("matrixmultrbatched", "PP", (J, L, K), (8, 16, 4))]
         self._kernel = prepare_kernels(files, templates, constvars)['matrixmultrbatched']
-        self.adjoint.prepare_gpu()
+        self.adjoint.prepare_gpu(type_t=type_t)
 
     def _call_gpu(self, x, y=None, add=False):
         assert y is not None

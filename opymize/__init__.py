@@ -104,7 +104,7 @@ class Operator(object):
         self.x = None # Variable, input (domain)
         self.y = None # Variable, output (range)
 
-    def prepare_gpu(self):
+    def prepare_gpu(self, type_t="double"):
         # prepare/compile gpu kernels if necessary
         pass
 

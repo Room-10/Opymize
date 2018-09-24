@@ -142,10 +142,9 @@ def diff_prepare_gpu(imagedims, C, weights, type_t="double"):
         'TYPE_T': type_t
     }
     files = [resource_stream('opymize.linear', 'diff.cu')]
-    fd = 4 if type_t == "double" else 5
     templates = [
-        ("gradient", "PP", (N, C, D), (fd*6, 16, 2)),
-        ("divergence", "PP", (N, C, 1), (fd*8, 24, 1)),
+        ("gradient", "PP", (N, C, D), (24, 16, 2)),
+        ("divergence", "PP", (N, C, 1), (32, 24, 1)),
     ]
     return prepare_kernels(files, templates, constvars)
 

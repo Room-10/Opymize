@@ -56,7 +56,7 @@ class NegProj(Operator):
         self._jacobian = NihilOp(N, keep=self.x.new(dtype=bool))
 
     def prepare_gpu(self, type_t="double"):
-        self._kernel = ElementwiseKernel("%s *x, %S *y" % ((type_t,)*2),
+        self._kernel = ElementwiseKernel("%s *x, %s *y" % ((type_t,)*2),
             "y[i] = (x[i] > 0) ? 0 : x[i]")
         self._kernel_add = ElementwiseKernel("%s *x, %s *y" % ((type_t,)*2),
             "y[i] += (x[i] > 0) ? 0 : x[i]")

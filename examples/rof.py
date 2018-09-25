@@ -74,7 +74,7 @@ def main(lbd=40.0, input_file=None, new_m=None):
 
     solver = PDHG(G, F, linop)
     solver.solve(steps="precond", precision="double", use_gpu=True,
-                 term_relgap=1e-5, term_maxiter=int(1e4), granularity=int(1e3))
+                 term_pd_gap=1e-5, term_maxiter=int(1e4), granularity=int(1e3))
 
     ## testing a new semismooth (quasi-)newton solver:
     #pdhg_state = solver.state

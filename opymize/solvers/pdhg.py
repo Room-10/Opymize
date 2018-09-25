@@ -27,6 +27,28 @@ class PDHG(object):
         obj2, infeas2 = self.f.conj(y)
         return -obj - obj2, infeas + infeas2
 
+    def pd_gap(self):
+        i = self.itervars
+        obj_p, infeas_p = self.obj_primal(i['xk'], i['ygradk'])
+        obj_d, infeas_d = self.obj_dual(i['xgradk'], i['yk'])
+        return {
+            'objp': obj_p,
+            'objd': obj_d,
+            'infeasp': infeas_p,
+            'infeasd': infeas_d,
+            'relgap': (obj_p - obj_d) / max(np.spacing(1), obj_d)
+        }
+
+    def pd_res(self, eps_absp, eps_relp, eps_absd, eps_reld):
+        i = self.itervars
+        return {
+            'resp': i['res_pk'],
+            'resd': i['res_dk'],
+            'epsp': np.sqrt(i['xk'].size)*eps_absp + eps_relp*i['gnorm_pk'],
+            'epsd': np.sqrt(i['yk'].size)*eps_absd + eps_reld*i['gnorm_dk'],
+        }
+
+
     def prepare_gpu(self, type_t="double"):
         import opymize.tools.gpu # gpu init
         from pycuda import gpuarray
@@ -57,9 +79,9 @@ class PDHG(object):
                 "zk[i] = zkp1[i]; zgradk[i] = zgradkp1[i]"),
             'residual': 0 if 'adaptive' not in c else ReductionKernel(
                 np.float64, neutral="0", reduce_expr="a+b",
-                map_expr="fabs((zk[i] - zkp1[i])/step - (zgradk[i] - zgradkp1[i]))",
-                arguments="%s step, %s *zk, %s *zkp1, %s *zgradk, %s *zgradkp1"\
-                            % (type_t, type_t, type_t, type_t, type_t)),
+                map_expr="pow((zk[i] - zkp1[i])/a - b*zgk[i] + c*zgkp1[i], 2)",
+                arguments="%s a, %s *zk, %s *zkp1, %s b, %s *zgk, %s c, %s *zgkp1"\
+                            % (type_t,)*7),
         }
 
         self.gpu_itervars = {}
@@ -92,11 +114,11 @@ class PDHG(object):
         else:
             self.gpu_kernels['overrelax'](ygradbk, theta, ygradkp1, ygradk)
 
-    def residual(self, fact, zk, zkp1, zgradk, zgradkp1):
+    def residual(self, a, zk, zkp1, b, zgk, c, zgkp1):
         if type(zk) is np.ndarray:
-            return norm((zk - zkp1)/fact - (zgradk - zgradkp1), ord=1)
+            return norm((zk - zkp1)/a - b*zgk + c*zgkp1, ord=2)
         else:
-            return self.gpu_kernels['residual'](fact, zk, zkp1, zgradk, zgradkp1).get()
+            return np.sqrt(gpu_kernel(a, zk, zkp1, b, zgk, c, zgkp1).get())
 
     def advance(self, zk, zkp1, zgradk, zgradkp1):
         if type(zk) is np.ndarray:
@@ -104,7 +126,7 @@ class PDHG(object):
         else:
             self.gpu_kernels['advance'](zk, zkp1, zgradk, zgradkp1)
 
-    def iteration_step(self):
+    def iteration_step(self, compute_gnorms=False):
         v = self.gpu_itervars if self.use_gpu else self.itervars
         xk, xkp1, xgradk, xgradkp1 = v['xk'], v['xkp1'], v['xgradk'], v['xgradkp1']
         yk, ykp1, ygradk, ygradkp1 = v['yk'], v['ykp1'], v['ygradk'], v['ygradkp1']
@@ -112,6 +134,8 @@ class PDHG(object):
 
         i = self.itervars
         c = self.constvars
+        theta = c['theta']
+
         if 'precond' in c:
             tau = self.gpu_constvars['xtau'] if self.use_gpu else c['xtau']
             sigma = self.gpu_constvars['ysigma'] if self.use_gpu else c['ysigma']
@@ -126,7 +150,7 @@ class PDHG(object):
         self.take_step(xkp1, xk, -1, tau, xgradk)
         self.gprox(xkp1)
         self.linop(xkp1, ygradkp1)
-        self.overrelax(ygradbk, c['theta'], ygradkp1, ygradk)
+        self.overrelax(ygradbk, theta, ygradkp1, ygradk)
 
         # --- duals:
         self.take_step(ykp1, yk, 1, sigma, ygradbk)
@@ -134,9 +158,16 @@ class PDHG(object):
         self.linop.adjoint(ykp1, xgradkp1)
 
         # --- step sizes:
-        if 'adaptive' in c and i['alphak'] > 1e-10:
-            i['res_pk'] = self.residual(tau, xk, xkp1, xgradk, xgradkp1)
-            i['res_dk'] = self.residual(sigma, yk, ykp1, ygradk, ygradkp1)
+        if 'adaptive' in c:
+            res_argsp = [  tau, xk, xkp1,     1, xgradk,     1, xgradkp1]
+            res_argsd = [sigma, yk, ykp1, theta, ygradk, theta, ygradkp1]
+            i['res_pk'] = self.residual(*res_argsp)
+            i['res_dk'] = self.residual(*res_argsd)
+            if compute_gnorms:
+                res_argsp[5] -= 1
+                res_argsd[5] += 1
+                i['gnorm_pk'] = self.residual(*res_argsp)
+                i['gnorm_dk'] = self.residual(*res_argsd)
 
             if i['res_pk'] > c['s']*i['res_dk']*c['Delta']:
                 i['tauk'] *= 1.0/(1.0 - i['alphak'])
@@ -200,7 +231,7 @@ class PDHG(object):
 
     def solve(self, continue_at=None, precision="double",
                     steps="const", step_bound=None, step_factor=1.0,
-                    term_relgap=1e-5, term_infeas=None, term_maxiter=int(5e4),
+                    term_pd_gap=1e-5, term_pd_res=None, term_maxiter=int(5e4),
                     granularity=5000, use_gpu=True):
         i = self.itervars
         c = self.constvars
@@ -218,8 +249,11 @@ class PDHG(object):
         self.linop(i['xk'], i['ygradk'])
         self.linop.adjoint(i['yk'], i['xgradk'])
 
-        if term_infeas is None:
-            term_infeas = term_relgap
+        pd_res_mode = term_pd_res is not None
+        if pd_res_mode:
+            assert steps == "adaptive"
+        elif type(term_pd_gap) is not tuple:
+            term_pd_gap[1] = term_pd_gap[0]
 
         obj_p = obj_d = infeas_p = infeas_d = relgap = 0.
         c['theta'] = 1.0 # overrelaxation
@@ -237,45 +271,49 @@ class PDHG(object):
         with GracefulInterruptHandler() as interrupt_hdl:
             _iter = 0
             while _iter < term_maxiter:
-                self.iteration_step()
+                check_step = (_iter % granularity == 0)
+                self.iteration_step(compute_gnorms=check_step and pd_res_mode)
                 _iter += 1
 
-                if interrupt_hdl.interrupted or _iter % granularity == 0:
+                if interrupt_hdl.interrupted or check_step:
                     if interrupt_hdl.interrupted:
                         print("Interrupt (SIGINT) at iter=%d" % _iter)
 
                     if use_gpu:
-                        for n in ['xk','xgradk','yk','ygradk']:
+                        for n in self.gpu_itervars.keys():
                             self.gpu_itervars[n].get(ary=i[n])
-                    obj_p, infeas_p = self.obj_primal(i['xk'], i['ygradk'])
-                    obj_d, infeas_d = self.obj_dual(i['xgradk'], i['yk'])
 
-                    # compute relative primal-dual gap
-                    relgap = (obj_p - obj_d) / max(np.spacing(1), obj_d)
+                    if pd_res_mode:
+                        info = self.pd_res(*term_pd_res)
+                        logging.info("#{:6d}: res_p = {: 9.6g} ({: 9.6g}), " \
+                            "res_d = {: 9.6g} ({: 9.6g}), ".format(
+                            _iter, info['resp'], info['epsp'],
+                            info['resd'], info['epsd']
+                        ))
+                        test_p = info['resp'] < info['epsp']
+                        test_d = info['resd'] < info['epsd']
+                        test_term = test_p and test_d
+                    else:
+                        info = self.pd_gap()
+                        logging.info("#{:6d}: objp = {: 9.6g} ({: 9.6g}), " \
+                            "objd = {: 9.6g} ({: 9.6g}), " \
+                            "gap = {: 9.6g}, " \
+                            "relgap = {: 9.6g} ".format(
+                            _iter, info['objp'], info['infeasp'],
+                            info['objd'], info['infeas_d'],
+                            info['objp'] - info['objd'],
+                            info['relgap']
+                        ))
+                        test_err = np.abs(info['relgap']) < term_pd_gap[0]
+                        infeasp, infeasd = info['infeasp'], info['infeasd']
+                        test_infeas = max(infeasp, infeasd) < term_pd_gap[1]
+                        test_term = test_err and test_infeas
 
-                    logging.info("#{:6d}: objp = {: 9.6g} ({: 9.6g}), " \
-                        "objd = {: 9.6g} ({: 9.6g}), " \
-                        "gap = {: 9.6g}, " \
-                        "relgap = {: 9.6g} ".format(
-                        _iter, obj_p, infeas_p,
-                        obj_d, infeas_d,
-                        obj_p - obj_d,
-                        relgap
-                    ))
-
-                    if np.abs(relgap) < term_relgap and max(infeas_p, infeas_d) < term_infeas:
+                    if test_term or interrupt_hdl.interrupted:
                         break
 
-                    if interrupt_hdl.interrupted:
-                        break
-
-        return {
-            'objp': obj_p,
-            'objd': obj_d,
-            'infeasp': infeas_p,
-            'infeasd': infeas_d,
-            'relgap': relgap
-        }
+        info['iter'] = _iter
+        return info
 
     @property
     def state(self):

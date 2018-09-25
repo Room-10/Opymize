@@ -32,6 +32,7 @@ class PDHG(object):
         from pycuda import gpuarray
         from pycuda.elementwise import ElementwiseKernel
         from pycuda.reduction import ReductionKernel
+        import pycuda.driver
 
         i = self.itervars
         c = self.constvars
@@ -74,7 +75,10 @@ class PDHG(object):
             self.gpu_constvars[name] = gpuarray.to_gpu(val)
 
         self.use_gpu = True
-        logging.info("CUDA kernels prepared for GPU")
+
+        (free,total) = pycuda.driver.mem_get_info()
+        logging.info("CUDA kernels prepared for GPU (%d/%d MB available)"
+                     % (free//(1024*1024), total//(1024*1024)))
 
     def take_step(self, zkp1, zk, direction, stepsize, zgradk):
         if type(zkp1) is np.ndarray:
@@ -221,6 +225,12 @@ class PDHG(object):
         c['theta'] = 1.0 # overrelaxation
         self.prepare_stepsizes(step_bound, step_factor, steps)
         if use_gpu: self.prepare_gpu(type_t=precision)
+
+        logging.info("# primal variables: %d" % i['xk'].size)
+        logging.info("# dual variables: %d" % i['yk'].size)
+
+        mem = (i['xk'].nbytes*4 + i['yk'].nbytes*5) // (1024*1024)
+        logging.info("Memory requirements: %d MB" % mem)
 
         logging.info("Solving (steps<%d)..." % term_maxiter)
 

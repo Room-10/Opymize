@@ -251,7 +251,8 @@ class PDHG(object):
 
         pd_res_mode = term_pd_res is not None
         if pd_res_mode:
-            assert steps == "adaptive"
+            logging.info("Assuming adaptive step sizes (for pd_res_mode)")
+            steps = "adaptive"
         elif type(term_pd_gap) is not tuple:
             # tolerances for relative pd-gap and infeasibilities
             term_pd_gap = (term_pd_gap, term_pd_gap)

@@ -253,7 +253,8 @@ class PDHG(object):
         if pd_res_mode:
             assert steps == "adaptive"
         elif type(term_pd_gap) is not tuple:
-            term_pd_gap[1] = term_pd_gap[0]
+            # tolerances for relative pd-gap and infeasibilities
+            term_pd_gap = (term_pd_gap, term_pd_gap)
 
         obj_p = obj_d = infeas_p = infeas_d = relgap = 0.
         c['theta'] = 1.0 # overrelaxation

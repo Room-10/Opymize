@@ -81,7 +81,7 @@ class PDHG(object):
                 np.float64, neutral="0", reduce_expr="a+b",
                 map_expr="pow((zk[i] - zkp1[i])/a - b*zgk[i] + c*zgkp1[i], 2)",
                 arguments="%s a, %s *zk, %s *zkp1, %s b, %s *zgk, %s c, %s *zgkp1"\
-                            % (type_t,)*7),
+                            % ((type_t,)*7)),
         }
 
         self.gpu_itervars = {}
@@ -118,6 +118,7 @@ class PDHG(object):
         if type(zk) is np.ndarray:
             return norm((zk - zkp1)/a - b*zgk + c*zgkp1, ord=2)
         else:
+            gpu_kernel = self.gpu_kernels['residual']
             return np.sqrt(gpu_kernel(a, zk, zkp1, b, zgk, c, zgkp1).get())
 
     def advance(self, zk, zkp1, zgradk, zgradkp1):
@@ -253,6 +254,8 @@ class PDHG(object):
         if pd_res_mode:
             logging.info("Assuming adaptive step sizes (for pd_res_mode)")
             steps = "adaptive"
+            if type(term_pd_res) is not tuple:
+                term_pd_res = (term_pd_res,)*4
         elif type(term_pd_gap) is not tuple:
             # tolerances for relative pd-gap and infeasibilities
             term_pd_gap = (term_pd_gap, term_pd_gap)
@@ -262,20 +265,18 @@ class PDHG(object):
         self.prepare_stepsizes(step_bound, step_factor, steps)
         if use_gpu: self.prepare_gpu(type_t=precision)
 
-        logging.info("# primal variables: %d" % i['xk'].size)
-        logging.info("# dual variables: %d" % i['yk'].size)
-
         mem = (i['xk'].nbytes*4 + i['yk'].nbytes*5) // (1024*1024)
-        logging.info("Memory requirements: %d MB" % mem)
+        logging.info("%d/%d (primal/dual) variables, %d MB of memory"
+            % (i['xk'].size, i['yk'].size, mem))
 
         logging.info("Solving (steps<%d)..." % term_maxiter)
 
         with GracefulInterruptHandler() as interrupt_hdl:
             _iter = 0
             while _iter < term_maxiter:
+                _iter += 1
                 check_step = (_iter % granularity == 0)
                 self.iteration_step(compute_gnorms=check_step and pd_res_mode)
-                _iter += 1
 
                 if interrupt_hdl.interrupted or check_step:
                     if interrupt_hdl.interrupted:
@@ -302,7 +303,7 @@ class PDHG(object):
                             "gap = {: 9.6g}, " \
                             "relgap = {: 9.6g} ".format(
                             _iter, info['objp'], info['infeasp'],
-                            info['objd'], info['infeas_d'],
+                            info['objd'], info['infeasd'],
                             info['objp'] - info['objd'],
                             info['relgap']
                         ))

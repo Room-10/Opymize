@@ -184,6 +184,7 @@ class L1NormsProj(Operator):
 
     def prepare_gpu(self, type_t="double"):
         constvars = {
+            'L1_NORMS_PROJ': 1,
             'lbd': self.lbd,
             'N': self.N, 'M1': self.M[0], 'M2': self.M[1],
             'matrixnorm': self.matrixnorm[0].upper(),
@@ -271,3 +272,113 @@ class L12ProjJacobian(LinOp):
             else: x[:] = yy
         elif add:
             y += yy
+
+class EpigraphProj(Operator):
+    """ T(x)[i,j] = proj[epi(f[i]_j*)](x[i,j])
+
+    Project onto the epigraphs epi(f[i]_j*) of the convex conjugates of convex
+    pieces f[i]_j of functions f[i].
+    The functions f[i] are piecewise linear with common base points
+    {v[k] for k in I[i]} and values b[i,k] = f[i](v[k]) for k in I[i].
+    By f[i]_j we denote the restriction of f[i] to a subset (described by J[j])
+    such that f[i]_j is convex.
+
+        f[i]_j*(x) = max_{k : I[i,J[j]][k] == True} <v[k],x> + b[i,k]
+
+    In other words, y = T(x)[i,j] is the solution to the inequality constrained
+    quadratic program
+
+        minimize 0.5*||y - x[i,j]||**2
+        s.t. y[-1] - <v[k],y[:-1]> >= b[i,k] for any k with I[i,J[j]][k] == True
+
+    The solution is computed using a QP solver.
+    """
+    def __init__(self, I, J, v, b):
+        """
+        Args:
+            I : ndarray of bools, shape (nfuns, npoints)
+            J : ndarray of ints, shape (nregions, nsubpoints)
+            v : ndarray of floats, shape (npoints, 2)
+            b : ndarray of floats, shape (nfuns, npoints)
+        """
+        Operator.__init__(self)
+
+        nfuns, npoints = I.shape
+        nregions, nsubpoints = J.shape
+
+        self.x = Variable((nfuns, nregions, 3))
+        self.y = self.x
+
+        self.I = I
+        self.J = J
+        self.v = v
+        self.b = b
+
+    def prepare_gpu(self, type_t="double"):
+        nfuns, npoints = self.I.shape
+        nregions, nsubpoints = self.J.shape
+
+        counts = np.zeros((nfuns*nregions,), dtype=np.int32)
+        counts[:] = [np.count_nonzero(Ii[Jj]) for Ii in I for Jj in J]
+
+        indices = gpuarray.zeros((nfuns*nregions,), dtype=np.int64)
+        np.cumsum(counts[:-1], out=indices[1:])
+        total_count = indices[-1] + count[-1]
+
+        np_dtype = np.float64 if type_t == "double" else np.float32
+        A_gpu = gpuarray.ones((total_count,3), dtype=np_dtype)
+        b_gpu = gpuarray.empty((total_count,), dtype=np_dtype)
+        for i in range(nfuns):
+            for j in range(nregions):
+                mask, idx, count = I[i,J[j]], indices[i,j], counts[i,j]
+                A_gpu[idx:idx+count,0:-1] = -self.v[mask]
+                b_gpu[idx:idx+count] = self.b[i,mask]
+
+        constvars = {
+            'EPIGRAPH_PROJ': 1,
+            'nfuns': nfuns, 'nregions': nregions,
+            'counts': counts, 'indices': indices,
+            'A_STORE': A_gpu, 'B_STORE': b_gpu,
+            'TYPE_T': type_t,
+        }
+        files = [resource_stream('opymize.operators', 'proj.cu')]
+        templates = [("epigraphproj", "P", (nfuns, nregions, 1), (32, 24, 1))]
+        self._kernel = prepare_kernels(files, templates, constvars)['epigraphproj']
+
+    def _call_gpu(self, x, y=None, add=False, jacobian=False):
+        assert not add
+        assert not jacobian
+        if y is not None:
+            y[:] = x.copy()
+            x = y
+        self._kernel(x)
+
+    def _call_cpu(self, x, y=None, add=False, jacobian=False):
+        assert not add
+        assert not jacobian
+        x = self.x.vars(x)[0]
+        for i in range(self.I.shape[0]):
+            for j in range(self.J.shape[0]):
+                xij = x[i,j]
+                mask = I[i,J[j]]
+                b = self.b[i,mask]
+                A = np.ones((b.size,3))
+                A[:,0:-1] = -self.v[mask]
+
+                #   Now solve
+                # minimize  0.5*||y - xij||**2  s.t.  A y >= b
+                #   or
+                # minimize  0.5*||y||**2 - <xij,y>  s.t.  A y >= b
+                #   which is equivalent to
+                # minimize 0.5*||A' z||**2 - <b - A xij,z> s.t. z >= 0
+                #   or
+                # minimize 0.5*||A' z + xij||**2 - <b,z> s.t. z >= 0
+                #   for y = xij + A' z.
+
+                # import cvxopt
+                # import cvxopt.solvers
+                P = cvxopt.spmatrix(1.0, range(b.size), range(b.size))
+                q = -cvxopt.matrix(xij)
+                G = -cvxopt.matrix(A)
+                h = -cvxopt.matrix(b)
+                xij[:] = cvxopt.solvers.qp(P, q, G, h)['x']

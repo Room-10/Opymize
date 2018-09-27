@@ -1,4 +1,5 @@
 
+#ifdef L1_NORMS_PROJ
 __global__ void l1normsproj(TYPE_T *x)
 {
     /* This function makes heavy use of registers (34 32-bit registers), so
@@ -104,3 +105,39 @@ __global__ void l1normsproj(TYPE_T *x)
     }
 #endif
 }
+#endif
+
+#ifdef EPIGRAPH_PROJ
+__global__ void epigraphproj(TYPE_T *X_STORE)
+{
+    /* This function solves, for fixed i and j,
+     *
+     *      minimize  0.5*||y - x[i,j]||**2  s.t.  A[i,j] y >= b[i,j]
+     *
+     * using an active set method.
+     *
+     * The result is stored in &x[i,j].
+     */
+
+    // global thread index
+    int i = blockIdx.x*blockDim.x + threadIdx.x;
+    int j = blockIdx.y*blockDim.y + threadIdx.y;
+
+    // stay inside maximum dimensions
+    if (i >= nfuns || j >= nregions) return;
+
+    int idx = i*nregions + j;
+
+    TYPE_T *A = &A_STORE[idx];
+    TYPE_T *b = &B_STORE[idx];
+    TYPE_T *x = &X_STORE[idx];
+
+    TYPE_T[3] y;
+
+    // SOLVER MAGIC COMES HERE
+
+    for (int k = 0; k < 3; k++) {
+        x[idx + k] = y[k];
+    }
+}
+#endif

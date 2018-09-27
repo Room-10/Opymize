@@ -108,7 +108,7 @@ __global__ void l1normsproj(TYPE_T *x)
 #endif
 
 #ifdef EPIGRAPH_PROJ
-__global__ void epigraphproj(TYPE_T *X_STORE)
+__global__ void epigraphproj(TYPE_T *x)
 {
     /* This function solves, for fixed i and j,
      *
@@ -127,17 +127,18 @@ __global__ void epigraphproj(TYPE_T *X_STORE)
     if (i >= nfuns || j >= nregions) return;
 
     int idx = i*nregions + j;
+    int N = counts[idx];
 
-    TYPE_T *A = &A_STORE[idx];
-    TYPE_T *b = &B_STORE[idx];
-    TYPE_T *x = &X_STORE[idx];
+    TYPE_T *A = &A_STORE[indices[idx]];
+    TYPE_T *b = &B_STORE[indices[idx]];
+    TYPE_T *xij = &x[idx];
 
     TYPE_T[3] y;
 
     // SOLVER MAGIC COMES HERE
 
     for (int k = 0; k < 3; k++) {
-        x[idx + k] = y[k];
+        xij[k] = y[k];
     }
 }
 #endif

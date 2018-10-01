@@ -1,6 +1,6 @@
 
 from opymize import Variable, Functional
-from opymize.operators import ConstOp, ConstrainOp, PosProj, NegProj
+from opymize.operators import ConstOp, ConstrainOp, PosProj, NegProj, EpigraphProj
 
 import numpy as np
 from numpy.linalg import norm
@@ -96,3 +96,59 @@ class NegativityFct(Functional):
     def prox(self, tau):
         # independent of tau
         return self._prox
+
+class EpigraphFct(Functional):
+    """ F(x) = 0 if x[j,i] \in epi(f[i]_j*) for every j,i else infty
+
+    Cannot be called!
+    """
+    def __init__(self, I, J, v, b, conj=None):
+        """
+        Args:
+            I : ndarray of bools, shape (nfuns, npoints)
+            J : ndarray of ints, shape (nregions, nsubpoints)
+            v : ndarray of floats, shape (npoints, 2)
+            b : ndarray of floats, shape (nfuns, npoints)
+        """
+        Functional.__init__(self)
+
+        nfuns, npoints = I.shape
+        nregions, nsubpoints = J.shape
+
+        self.x = Variable((nregions, nfuns, 3))
+
+        if conj is None:
+            self.conj = EpigraphSupportFct(I, J, v, b, conj=self)
+        else:
+            self.conj = conj
+
+        self._prox = EpigraphProj(I, J, v, b)
+
+    def prox(self, tau):
+        # independent of tau
+        return self._prox
+
+class EpigraphSupportFct(Functional):
+    """ F(x) = sum_ji max <y,x[j,i]> s.t. y \in epi(f[i]_j*)
+
+    Cannot be called! prox is not implemented!
+    """
+    def __init__(self, I, J, v, b, conj=None):
+        """
+        Args:
+            I : ndarray of bools, shape (nfuns, npoints)
+            J : ndarray of ints, shape (nregions, nsubpoints)
+            v : ndarray of floats, shape (npoints, 2)
+            b : ndarray of floats, shape (nfuns, npoints)
+        """
+        Functional.__init__(self)
+
+        nfuns, npoints = I.shape
+        nregions, nsubpoints = J.shape
+
+        self.x = Variable((nregions, nfuns, 3))
+
+        if conj is None:
+            self.conj = EpigraphFct(I, J, v, b, conj=self)
+        else:
+            self.conj = conj

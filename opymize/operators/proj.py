@@ -5,6 +5,10 @@ from opymize.linear import NihilOp
 import numpy as np
 import numba
 
+import cvxopt
+import cvxopt.solvers
+cvxopt.solvers.options['show_progress'] = False
+
 try:
     import opymize.tools.gpu
     from opymize.tools.gpu import prepare_kernels
@@ -274,7 +278,7 @@ class L12ProjJacobian(LinOp):
             y += yy
 
 class EpigraphProj(Operator):
-    """ T(x)[i,j] = proj[epi(f[i]_j*)](x[i,j])
+    """ T(x)[j,i] = proj[epi(f[i]_j*)](x[j,i])
 
     Project onto the epigraphs epi(f[i]_j*) of the convex conjugates of convex
     pieces f[i]_j of functions f[i].
@@ -283,13 +287,13 @@ class EpigraphProj(Operator):
     By f[i]_j we denote the restriction of f[i] to a subset (described by J[j])
     such that f[i]_j is convex.
 
-        f[i]_j*(x) = max_{k : I[i,J[j]][k] == True} <v[k],x> + b[i,k]
+        f[i]_j*(x) = max_{k : I[i,J[j]][k] == True} <v[k],x> - b[i,k]
 
-    In other words, y = T(x)[i,j] is the solution to the inequality constrained
+    In other words, y = T(x)[j,i] is the solution to the inequality constrained
     quadratic program
 
-        minimize 0.5*||y - x[i,j]||**2
-        s.t. y[-1] - <v[k],y[:-1]> >= b[i,k] for any k with I[i,J[j]][k] == True
+        minimize 0.5*||y - x[j,i]||**2
+        s.t. <v[k],y[:-1]> - y[-1] <= b[i,k] for any k with I[i,J[j]][k] == True
 
     The solution is computed using a QP solver.
     """
@@ -306,7 +310,7 @@ class EpigraphProj(Operator):
         nfuns, npoints = I.shape
         nregions, nsubpoints = J.shape
 
-        self.x = Variable((nfuns, nregions, 3))
+        self.x = Variable((nregions, nfuns, 3))
         self.y = self.x
 
         self.I = I
@@ -315,34 +319,42 @@ class EpigraphProj(Operator):
         self.b = b
 
     def prepare_gpu(self, type_t="double"):
+        from pycuda import gpuarray
+
         nfuns, npoints = self.I.shape
         nregions, nsubpoints = self.J.shape
 
         counts = np.zeros((nfuns*nregions,), dtype=np.int32)
-        counts[:] = [np.count_nonzero(Ii[Jj]) for Ii in I for Jj in J]
+        counts[:] = [np.count_nonzero(Ii[Jj]) for Ii in self.I for Jj in self.J]
 
-        indices = gpuarray.zeros((nfuns*nregions,), dtype=np.int64)
+        indices = np.zeros((nfuns*nregions,), dtype=np.int64)
         np.cumsum(counts[:-1], out=indices[1:])
-        total_count = indices[-1] + count[-1]
+        total_count = indices[-1] + counts[-1]
+
+        counts = counts.reshape((nfuns, nregions))
+        indices = indices.reshape((nfuns, nregions))
 
         np_dtype = np.float64 if type_t == "double" else np.float32
-        A_gpu = gpuarray.ones((total_count,3), dtype=np_dtype)
-        b_gpu = gpuarray.empty((total_count,), dtype=np_dtype)
+        A_gpu = np.zeros((total_count,2), dtype=np_dtype)
+        b_gpu = np.zeros((total_count,), dtype=np_dtype)
         for i in range(nfuns):
             for j in range(nregions):
-                mask, idx, count = I[i,J[j]], indices[i,j], counts[i,j]
-                A_gpu[idx:idx+count,0:-1] = -self.v[mask]
-                b_gpu[idx:idx+count] = self.b[i,mask]
+                mask, idx, count = self.I[i,self.J[j]], indices[i,j], counts[i,j]
+                A_gpu[idx:idx+count,:] = self.v[self.J[j]][mask]
+                b_gpu[idx:idx+count] = self.b[i,self.J[j]][mask]
 
         constvars = {
             'EPIGRAPH_PROJ': 1,
             'nfuns': nfuns, 'nregions': nregions,
             'counts': counts, 'indices': indices,
             'A_STORE': A_gpu, 'B_STORE': b_gpu,
+            'term_maxiter': 2500, 'term_tolerance': 1e-9,
             'TYPE_T': type_t,
         }
+        for f in ['fabs']:
+            constvars[f.upper()] = f if type_t == "double" else (f+"f")
         files = [resource_stream('opymize.operators', 'proj.cu')]
-        templates = [("epigraphproj", "P", (nfuns, nregions, 1), (32, 24, 1))]
+        templates = [("epigraphproj", "P", (nregions, nfuns, 1), (24, 12, 1))]
         self._kernel = prepare_kernels(files, templates, constvars)['epigraphproj']
 
     def _call_gpu(self, x, y=None, add=False, jacobian=False):
@@ -359,26 +371,25 @@ class EpigraphProj(Operator):
         x = self.x.vars(x)[0]
         for i in range(self.I.shape[0]):
             for j in range(self.J.shape[0]):
-                xij = x[i,j]
-                mask = I[i,J[j]]
-                b = self.b[i,mask]
-                A = np.ones((b.size,3))
-                A[:,0:-1] = -self.v[mask]
+                xji = x[j,i]
+                mask = self.I[i,self.J[j]]
+                b = self.b[i,self.J[j]][mask]
+                A = np.zeros((b.size,3))
+                A[:,0:-1] = self.v[self.J[j]][mask]
+                A[:,-1] = -1.0
 
                 #   Now solve
-                # minimize  0.5*||y - xij||**2  s.t.  A y >= b
+                # minimize  0.5*||y - xji||**2  s.t.  A y <= b
                 #   or
-                # minimize  0.5*||y||**2 - <xij,y>  s.t.  A y >= b
+                # minimize  0.5*||y||**2 - <xji,y>  s.t.  A y <= b
                 #   which is equivalent to
-                # minimize 0.5*||A' z||**2 - <b - A xij,z> s.t. z >= 0
+                # minimize 0.5*||A' z||**2 - <A xji - b,z> s.t. z >= 0
                 #   or
-                # minimize 0.5*||A' z + xij||**2 - <b,z> s.t. z >= 0
-                #   for y = xij + A' z.
+                # minimize 0.5*||A' z - xji||**2 + <b,z> s.t. z >= 0
+                #   for y = xji - A' z.
 
-                # import cvxopt
-                # import cvxopt.solvers
                 P = cvxopt.spmatrix(1.0, range(b.size), range(b.size))
-                q = -cvxopt.matrix(xij)
-                G = -cvxopt.matrix(A)
-                h = -cvxopt.matrix(b)
-                xij[:] = cvxopt.solvers.qp(P, q, G, h)['x']
+                q = -cvxopt.matrix(xji)
+                G = cvxopt.matrix(A)
+                h = cvxopt.matrix(b)
+                xji[:] = np.array(cvxopt.solvers.qp(P, q, G, h)['x']).ravel()

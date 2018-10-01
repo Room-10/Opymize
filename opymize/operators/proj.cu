@@ -108,37 +108,328 @@ __global__ void l1normsproj(TYPE_T *x)
 #endif
 
 #ifdef EPIGRAPH_PROJ
+#include <stdio.h>
+
+inline __device__ void proj_plane(TYPE_T *a, TYPE_T *g)
+{
+    /* Compute the normal projection of g onto the subspace which
+     * is orthogonal to (a,-1).
+     *
+     * This is equivalent to solving
+     *
+     *      minimize  0.5*<p,p> - <g,p>
+     *          s.t.  a[0]*p[0] + a[1]*p[1] = p[2].
+     *
+     * The result is stored in g.
+     */
+
+    // fac : <(a,-1),g> / <(a,-1),(a,-1)>
+    TYPE_T fac  = a[0]*g[0] + a[1]*g[1] + (-1)*g[2];
+           fac /= a[0]*a[0] + a[1]*a[1] + (-1)*(-1);
+
+    // g -= fac*(a,-1)
+    g[0] -= fac*a[0];
+    g[1] -= fac*a[1];
+    g[2] -= fac*(-1);
+}
+
+inline __device__ void proj_line(TYPE_T *a0, TYPE_T *a1, TYPE_T *g)
+{
+    /* Compute the normal projection of g onto the 1-dimensional subspace which
+     * is orthogonal to span{(a0,-1),(a1,-1)}.
+     *
+     * This is equivalent to solving
+     *
+     *      minimize  0.5*<p,p> - <g,p>
+     *          s.t.  a0[0]*p[0] + a0[1]*p[1] = p[2],
+     *                a1[0]*p[0] + a1[1]*p[1] = p[2].
+     *
+     * The result is stored in g.
+     */
+
+    // v : cross product of (a0,-1) and (a1,-1)
+    TYPE_T v[3];
+    v[0] = a0[1]*(-1)  -  (-1)*a1[1];
+    v[1] =  (-1)*a1[0] - a0[0]*(-1) ;
+    v[2] = a0[0]*a1[1] - a0[1]*a1[0];
+
+    // fac : <g,v>/<v,v>
+    TYPE_T fac  = v[0]*g[0] + v[1]*g[1] + v[2]*g[2];
+           fac /= v[0]*v[0] + v[1]*v[1] + v[2]*v[2];
+
+    // g = fac*v
+    g[0] = fac*v[0];
+    g[1] = fac*v[1];
+    g[2] = fac*v[2];
+}
+
+inline __device__ void base_trafo_2d(TYPE_T *a0, TYPE_T *a1, TYPE_T *g)
+{
+    /* Express g in terms of {(a0,-1), (a1,-1)}.
+     *
+     * The result is stored in g so that
+     *
+     *      g[0]*(a0,-1) + g[1]*(a1,-1) = input
+     */
+
+    TYPE_T diff0 = a0[0] - a1[0];
+    TYPE_T diff1 = a0[1] - a1[1];
+
+    if (FABS(diff1) > FABS(diff0)) {
+        g[1] = (g[1] + g[2]*a1[1])/diff1;
+    } else {
+        g[1] = (g[0] + g[2]*a1[0])/diff0;
+    }
+
+    // make use of -mu[0]-mu[1] = g[2]
+    g[0] = - g[2] - g[1];
+}
+
+inline __device__ void swap_vars(TYPE_T *a, TYPE_T *b)
+{
+  TYPE_T c = a[0]; a[0] = b[0]; b[0] = c;
+}
+
+inline __device__ void solve_2x2(TYPE_T *A, TYPE_T *b)
+{
+    /* Solve a 2x2 linear system of equations.
+     *
+     * If singular, the projection of b onto span{a0} is returned, i.e.:
+     *
+     *      b[0] = <b,a0>/<a0,a0>,   b[1] = 0.
+     *
+     * The result is stored in b.
+     */
+
+    TYPE_T detA = A[0]*A[3] - A[1]*A[2];
+    TYPE_T alpha, beta, gamma;
+
+    if (FABS(detA) < 1e-9) {
+        b[0] = (b[0]*A[0] + b[1]*A[2])/(A[0]*A[0] + A[2]*A[2]);
+        b[1] = 0;
+    } else {
+        if(FABS(A[0]) < FABS(A[2])) {
+            swap_vars(&A[2], &A[0]);
+            swap_vars(&A[3], &A[1]);
+            swap_vars(&b[0], &b[1]);
+        }
+        alpha = A[2] / A[0];
+        beta = A[3] - A[1] * alpha;
+        gamma = b[1] - b[0] * alpha;
+        b[1] = gamma / beta;
+        b[0] = (b[0] - A[1] * b[1]) / A[0];
+    }
+}
+
+inline __device__ void base_trafo_3d(TYPE_T *a0, TYPE_T *a1, TYPE_T *a2, TYPE_T *g)
+{
+    /* Express g in terms of {(a0,-1), (a1,-1), (a2,-1)}.
+     *
+     * The result is stored in g so that
+     *
+     *      g[0]*(a0,-1) + g[1]*(a1,-1) + g[2]*(a2,-1) = input
+     */
+
+    TYPE_T matrix[4];
+    matrix[0] = a0[0] - a2[0];
+    matrix[1] = a1[0] - a2[0];
+    matrix[2] = a0[1] - a2[1];
+    matrix[3] = a1[1] - a2[1];
+    g[0] = g[0] + g[2]*a2[0];
+    g[1] = g[1] + g[2]*a2[1];
+    solve_2x2(matrix, g);
+
+    // make use of -mu[0]-mu[1]-mu[2] = g[2]
+    g[2] = - g[2] - g[1] - g[0];
+}
+
 __global__ void epigraphproj(TYPE_T *x)
 {
-    /* This function solves, for fixed i and j,
+    /* This function solves, for fixed j and i,
      *
-     *      minimize  0.5*||y - x[i,j]||**2  s.t.  A[i,j] y >= b[i,j]
+     *      minimize  0.5*||y - x[j,i]||**2
+     *          s.t.  A[i,j] y <= b[i,j],
      *
-     * using an active set method.
+     * using an active set method that assumes that at most three constraints
+     * are active at the same time (which can be satisfied in the case where the
+     * A[i,j] come from polyhedral epigraphs of convex functions).
      *
-     * The result is stored in &x[i,j].
+     * For more details see Algorithm 16.3 in
+     *
+     *      Nocedal, Wright: Numerical Optimization (2nd Ed.). Springer, 2006.
+     *
+     * The matrices A are of shape (N,3), but the last column is not stored in
+     * memory because it has the constant value -1.
+     *
+     * The result is stored in x[j,i].
      */
 
     // global thread index
-    int i = blockIdx.x*blockDim.x + threadIdx.x;
-    int j = blockIdx.y*blockDim.y + threadIdx.y;
+    int j = blockIdx.x*blockDim.x + threadIdx.x;
+    int i = blockIdx.y*blockDim.y + threadIdx.y;
 
     // stay inside maximum dimensions
-    if (i >= nfuns || j >= nregions) return;
+    if (j >= nregions || i >= nfuns) return;
 
+    // iteration variables and misc.
+    int k, l, _iter;
     int idx = i*nregions + j;
+    TYPE_T lhs, diff, Ax, Ad;
+
+    // N : number of inequality constraints
+    // A : shape (N,2)
+    // b : shape (N,)
+    // xji : shape (3,)
     int N = counts[idx];
-
-    TYPE_T *A = &A_STORE[indices[idx]];
+    TYPE_T *A = &A_STORE[2*indices[idx]];
     TYPE_T *b = &B_STORE[indices[idx]];
-    TYPE_T *xij = &x[idx];
+    TYPE_T *xji = &x[j*nfuns + i];
 
-    TYPE_T[3] y;
+    // y : iteration variable
+    // dir : search direction
+    TYPE_T y[3];
+    TYPE_T dir[3];
+    TYPE_T min_step, step;
 
-    // SOLVER MAGIC COMES HERE
+    // active and working set
+    int active_set[3];
+    int active_set_size = 0;
+    int blocking = -1;
+    bool in_set;
 
-    for (int k = 0; k < 3; k++) {
-        xij[k] = y[k];
+    // lagrange multipliers
+    TYPE_T lambda[3];
+    TYPE_T lambda_best;
+    int lambda_best_idx;
+
+    // initialize with input
+    for (k = 0; k < 3; k++) {
+        y[k] = xji[k];
+    }
+
+    // determine initial feasible guess by increasing y[2] if necessary
+    for (l = 0; l < N; l++) {
+        lhs = A[l*2 + 0]*y[0] + A[l*2 + 1]*y[1];
+        if (lhs - y[2] > b[l]) {
+            y[2] = lhs - b[l];
+            active_set[0] = k;
+            active_set_size = 1;
+        }
+    }
+
+    // projections are idempotent: feasible points are mapped to themselves
+    if (active_set_size == 0) return;
+
+    for (_iter = 0; _iter < term_maxiter; _iter++) {
+        blocking = -1;
+
+        if (active_set_size < 3) {
+             // explicitely solve equality constrained helper QPs
+            for (k = 0; k < 3; k++) {
+                dir[k] = xji[k] - y[k];
+            }
+            if (active_set_size == 1) {
+                proj_plane(&A[active_set[0]*2], dir);
+            } else if (active_set_size == 2) {
+                proj_line(&A[active_set[0]*2], &A[active_set[1]*2], dir);
+            }
+
+            if (FABS(dir[0]) + FABS(dir[1]) + FABS(dir[2]) > 0) {
+                // determine smallest step size at which a new (blocking)
+                // constraint enters the active set
+                min_step = 1.0;
+
+                // iterate over constraints not in active set
+                for (k = 0; k < N; k++) {
+                    in_set = false;
+                    for (l = 0; l < active_set_size; l++) {
+                        if (active_set[l] == k) { in_set = true; break; }
+                    }
+                    if (in_set) continue;
+
+                    Ax = A[k*2 + 0]*y[0] + A[k*2 + 1]*y[1] - y[2];
+                    Ad = A[k*2 + 0]*dir[0] + A[k*2 + 1]*dir[1] - dir[2];
+
+                    if (Ad > term_tolerance) {
+                        step = (b[k] - Ax)/Ad;
+                        if (step < min_step && step > -term_tolerance) {
+                            min_step = step;
+                            blocking = k;
+                        }
+                    }
+                }
+
+                // advance
+                for (k = 0; k < 3; k++) {
+                    y[k] += min_step * dir[k];
+                }
+            }
+
+            if (blocking != -1) {
+                // add blocking constraint to active set
+                active_set[active_set_size++] = blocking;
+            } else if (active_set_size == 1) {
+                // moved freely without blocking constraint
+                // and at least one constraint is active at solution
+                break;
+            }
+        }
+
+        if (active_set_size == 3 || blocking == -1) {
+            // Compute Lagrange multipliers lambda
+            lambda[0] = xji[0] - y[0];
+            lambda[1] = xji[1] - y[1];
+            lambda[2] = xji[2] - y[2];
+            if (active_set_size == 2) {
+                base_trafo_2d(&A[active_set[0]*2], &A[active_set[1]*2], lambda);
+            } else if (active_set_size == 3) {
+                base_trafo_3d(&A[active_set[0]*2], &A[active_set[1]*2],
+                              &A[active_set[2]*2], lambda);
+            } else {
+                printf("Warning: unusual active set size %d.\n", active_set_size);
+            }
+
+            // Check positivity of lambda
+            lambda_best = 0;
+            lambda_best_idx = -1;
+            for (k = 0; k < active_set_size; k++) {
+                if (lambda[k] < lambda_best) {
+                    lambda_best = lambda[k];
+                    lambda_best_idx = k;
+                }
+            }
+
+            if (lambda_best_idx == -1) {
+                // converged (all Lagrange multipliers in active set positive)
+                break;
+            } else {
+                // remove most negative lambda from active set
+                active_set[lambda_best_idx] = active_set[--active_set_size];
+            }
+        }
+    }
+
+#if 0
+    if (_iter == term_maxiter) {
+        printf("Warning: active set method didn't converge within %d iterations "
+               "at (%d,%d).\n", term_maxiter, i, j);
+    }
+
+    // check feasibility of result
+    for (l = 0; l < N; l++) {
+        lhs = A[l*2 + 0]*y[0] + A[l*2 + 1]*y[1] - y[2];
+        diff = lhs - b[l];
+        if (diff > 1e-3) {
+            printf("Warning: solution is not primal feasible at (%d,%d): "
+                   "diff=%g.\n", i, j, diff);
+            break;
+        }
+    }
+#endif
+
+    // write result to input array
+    for (k = 0; k < 3; k++) {
+        xji[k] = y[k];
     }
 }
 #endif

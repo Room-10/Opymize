@@ -83,6 +83,14 @@ def prepare_vars(constvars, blockvars):
     preamble = ""
     new_constvars = {}
 
+    const_conv = {
+        'int64': ['long', str],
+        'int32': ['int', str],
+        'bool': ['unsigned char', lambda i: str(int(i))],
+    }
+    const_nbytes = 0
+    const_nbytes_max = 0x10000
+
     for name, val in constvars.items():
         if type(val) is str:
             if len(val) == 1:
@@ -95,19 +103,19 @@ def prepare_vars(constvars, blockvars):
             preamble += "#define %s (%d)\n" % (name, 1 if val else 0)
         elif type(val) is float or type(val) is np.float64:
             preamble += "__constant__ double %s = %s;\n" % (name, repr(val))
+            const_nbytes += 8
         elif type(val) is np.ndarray:
-            if val.dtype == 'int64':
-                preamble += "__constant__ long %s[%d] = { %s };\n" % (
-                    name, val.size,
-                    ", ".join(str(i) for i in val.ravel()))
-            elif val.dtype == 'int32':
-                preamble += "__constant__ int %s[%d] = { %s };\n" % (
-                    name, val.size,
-                    ", ".join(str(i) for i in val.ravel()))
-            elif val.dtype == 'bool':
-                preamble += "__constant__ unsigned char %s[%d] = { %s };\n" % (
-                    name, val.size,
-                    ", ".join(str(int(i)) for i in val.ravel()))
+            if str(val.dtype) in const_conv:
+                conv_t, conv_fun = const_conv[str(val.dtype)]
+                if const_nbytes + val.nbytes < const_nbytes_max:
+                    preamble += "__constant__ %s %s[%d] = { %s };\n" % (
+                        conv_t, name, val.size,
+                        ", ".join(conv_fun(i) for i in val.ravel()))
+                    const_nbytes += val.nbytes
+                else:
+                    preamble += "__device__ %s %s[%d];\n" % (
+                        conv_t, name, val.size)
+                    new_constvars[name] = val
             elif val.dtype == 'float32':
                 preamble += "__device__ float %s[%d];\n" % (name, val.size)
                 new_constvars[name] = val

@@ -217,6 +217,7 @@ class PDHG(object):
                 i['alphak'] = 0.5
                 i['sigmak'] = i['tauk'] = np.sqrt(bnd)
                 i['res_pk'] = i['res_dk'] = 0.0
+                i['gnorm_pk'] = i['gnorm_dk'] = 0.0
                 self.gprox = self.g.prox(i['tauk'])
                 self.fconjprox = self.f.conj.prox(i['sigmak'])
                 logging.info("Adaptive steps: %f" % (bnd,))
@@ -256,6 +257,8 @@ class PDHG(object):
             steps = "adaptive"
             if type(term_pd_res) is not tuple:
                 term_pd_res = (term_pd_res,)*4
+            else:
+                assert len(term_pd_res) == 4
         elif type(term_pd_gap) is not tuple:
             # tolerances for relative pd-gap and infeasibilities
             term_pd_gap = (term_pd_gap, term_pd_gap)

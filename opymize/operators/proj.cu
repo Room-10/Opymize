@@ -205,6 +205,7 @@ inline __device__ void solve_2x2(TYPE_T *A, TYPE_T *b)
     TYPE_T alpha, beta, gamma;
 
     if (FABS(detA) < 1e-9) {
+        printf("Warning: Singular matrix in solve_2x2, det(A)=%g\n", detA);
         b[0] = (b[0]*A[0] + b[1]*A[2])/(A[0]*A[0] + A[2]*A[2]);
         b[1] = 0;
     } else {
@@ -213,11 +214,11 @@ inline __device__ void solve_2x2(TYPE_T *A, TYPE_T *b)
             swap_vars(&A[3], &A[1]);
             swap_vars(&b[0], &b[1]);
         }
-        alpha = A[2] / A[0];
-        beta = A[3] - A[1] * alpha;
-        gamma = b[1] - b[0] * alpha;
-        b[1] = gamma / beta;
-        b[0] = (b[0] - A[1] * b[1]) / A[0];
+        alpha = A[2]/A[0];
+        beta = A[3] - A[1]*alpha;
+        gamma = b[1] - b[0]*alpha;
+        b[1] = gamma/beta;
+        b[0] = (b[0] - A[1]*b[1])/A[0];
     }
 }
 
@@ -240,7 +241,7 @@ inline __device__ void base_trafo_3d(TYPE_T *a0, TYPE_T *a1, TYPE_T *a2, TYPE_T 
     solve_2x2(matrix, g);
 
     // make use of -mu[0]-mu[1]-mu[2] = g[2]
-    g[2] = - g[2] - g[1] - g[0];
+    g[2] = -g[2] - g[1] - g[0];
 }
 
 __global__ void epigraphproj(TYPE_T *x)
@@ -271,25 +272,23 @@ __global__ void epigraphproj(TYPE_T *x)
     // stay inside maximum dimensions
     if (j >= nregions || i >= nfuns) return;
 
-    // iteration variables and misc.
+    // iteration variables
     int k, l, _iter;
-    int idx = i*nregions + j;
-    TYPE_T lhs, diff, Ax, Ad;
 
     // N : number of inequality constraints
     // A : shape (N,2)
     // b : shape (N,)
     // xji : shape (3,)
-    int N = counts[idx];
-    TYPE_T *A = &A_STORE[2*indices[idx]];
-    TYPE_T *b = &B_STORE[indices[idx]];
-    TYPE_T *xji = &x[j*nfuns + i];
+    int N = counts[i*nregions + j];
+    TYPE_T *A = &A_STORE[2*indices[i*nregions + j]];
+    TYPE_T *b = &B_STORE[indices[i*nregions + j]];
+    TYPE_T *xji = &x[(j*nfuns + i)*3];
 
     // y : iteration variable
     // dir : search direction
     TYPE_T y[3];
     TYPE_T dir[3];
-    TYPE_T min_step, step;
+    TYPE_T min_step, step, Ax, Ad;
 
     // active and working set
     int active_set[3];
@@ -309,22 +308,27 @@ __global__ void epigraphproj(TYPE_T *x)
 
     // determine initial feasible guess by increasing y[2] if necessary
     for (l = 0; l < N; l++) {
-        lhs = A[l*2 + 0]*y[0] + A[l*2 + 1]*y[1];
-        if (lhs - y[2] > b[l]) {
-            y[2] = lhs - b[l];
-            active_set[0] = k;
+        Ax = A[l*2 + 0]*y[0] + A[l*2 + 1]*y[1];
+        if (Ax - y[2] > b[l]) {
+            y[2] = Ax - b[l];
+            active_set[0] = l;
             active_set_size = 1;
         }
     }
 
-    // projections are idempotent: feasible points are mapped to themselves
+    // projections are idempotent (feasible inputs are mapped to themselves)
     if (active_set_size == 0) return;
 
     for (_iter = 0; _iter < term_maxiter; _iter++) {
         blocking = -1;
 
-        if (active_set_size < 3) {
-             // explicitely solve equality constrained helper QPs
+        if (active_set_size > 2) {
+            // Whenever the active set reaches a size of three, it is reduced
+            // at the end of the iteration, according to the current Lagrange
+            // multipliers.
+            printf("Warning: active_set_size=%d at new iter.\n", active_set_size);
+        } else {
+            // explicitely solve equality constrained helper QPs
             for (k = 0; k < 3; k++) {
                 dir[k] = xji[k] - y[k];
             }
@@ -347,7 +351,7 @@ __global__ void epigraphproj(TYPE_T *x)
                     }
                     if (in_set) continue;
 
-                    Ax = A[k*2 + 0]*y[0] + A[k*2 + 1]*y[1] - y[2];
+                    Ax = A[k*2 + 0]*y[0]   + A[k*2 + 1]*y[1]   - y[2];
                     Ad = A[k*2 + 0]*dir[0] + A[k*2 + 1]*dir[1] - dir[2];
 
                     if (Ad > term_tolerance) {
@@ -369,20 +373,23 @@ __global__ void epigraphproj(TYPE_T *x)
                 // add blocking constraint to active set
                 active_set[active_set_size++] = blocking;
             } else if (active_set_size == 1) {
-                // moved freely without blocking constraint
-                // and at least one constraint is active at solution
+                // moved freely without blocking constraint and at least one
+                // constraint is active at solution -> convergence
                 break;
             }
         }
 
         if (active_set_size == 3 || blocking == -1) {
-            // Compute Lagrange multipliers lambda
+            // compute Lagrange multipliers lambda
             lambda[0] = xji[0] - y[0];
             lambda[1] = xji[1] - y[1];
             lambda[2] = xji[2] - y[2];
             if (active_set_size == 2) {
+                // this is solvable for any RHS due to the properties of A
                 base_trafo_2d(&A[active_set[0]*2], &A[active_set[1]*2], lambda);
             } else if (active_set_size == 3) {
+                // only way to get here is dir != 0 and a blocking constraint
+                // always solvable?
                 base_trafo_3d(&A[active_set[0]*2], &A[active_set[1]*2],
                               &A[active_set[2]*2], lambda);
             } else {
@@ -390,7 +397,7 @@ __global__ void epigraphproj(TYPE_T *x)
             }
 
             // Check positivity of lambda
-            lambda_best = 0;
+            lambda_best = 0.0;
             lambda_best_idx = -1;
             for (k = 0; k < active_set_size; k++) {
                 if (lambda[k] < lambda_best) {
@@ -417,11 +424,10 @@ __global__ void epigraphproj(TYPE_T *x)
 
     // check feasibility of result
     for (l = 0; l < N; l++) {
-        lhs = A[l*2 + 0]*y[0] + A[l*2 + 1]*y[1] - y[2];
-        diff = lhs - b[l];
-        if (diff > 1e-3) {
+        Ax = A[l*2 + 0]*y[0] + A[l*2 + 1]*y[1] - y[2];
+        if (Ax - b[l] > 1e-3) {
             printf("Warning: solution is not primal feasible at (%d,%d): "
-                   "diff=%g.\n", i, j, diff);
+                   "diff=%g.\n", i, j, Ax - b[l]);
             break;
         }
     }

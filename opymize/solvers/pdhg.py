@@ -263,7 +263,7 @@ class PDHG(object):
             # tolerances for relative pd-gap and infeasibilities
             term_pd_gap = (term_pd_gap, term_pd_gap)
 
-        obj_p = obj_d = infeas_p = infeas_d = relgap = 0.
+        info = {}
         c['theta'] = 1.0 # overrelaxation
         self.prepare_stepsizes(step_bound, step_factor, steps)
         if use_gpu: self.prepare_gpu(type_t=precision)

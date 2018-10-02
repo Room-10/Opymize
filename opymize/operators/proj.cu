@@ -176,13 +176,13 @@ inline __device__ void base_trafo_2d(TYPE_T *a0, TYPE_T *a1, TYPE_T *g)
     TYPE_T diff1 = a0[1] - a1[1];
 
     if (FABS(diff1) > FABS(diff0)) {
-        g[1] = (g[1] + g[2]*a1[1])/diff1;
+        g[0] = (g[1] + g[2]*a1[1])/diff1;
     } else {
-        g[1] = (g[0] + g[2]*a1[0])/diff0;
+        g[0] = (g[0] + g[2]*a1[0])/diff0;
     }
 
     // make use of -mu[0]-mu[1] = g[2]
-    g[0] = - g[2] - g[1];
+    g[1] = -g[2] - g[0];
 }
 
 inline __device__ bool solve_2x2(TYPE_T *A, TYPE_T *b)
@@ -239,6 +239,27 @@ inline __device__ void base_trafo_3d(TYPE_T *a0, TYPE_T *a1, TYPE_T *a2, TYPE_T 
     g[2] = -g[2] - g[1] - g[0];
 }
 
+inline __device__ int array_index_of(int *array, int array_size, int val) {
+    for (int i = 0; i < array_size; i++) {
+        if (array[i] == val) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+inline __device__ int array_argmin(TYPE_T *array, TYPE_T array_size) {
+    TYPE_T min = array[0];
+    TYPE_T argmin = 0;
+    for (int i = 1; i < array_size; i++) {
+        if (array[i] < min) {
+            min = array[i];
+            argmin = i;
+        }
+    }
+    return argmin;
+}
+
 __global__ void epigraphproj(TYPE_T *x)
 {
     /* This function solves, for fixed j and i,
@@ -283,18 +304,16 @@ __global__ void epigraphproj(TYPE_T *x)
     // dir : search direction
     TYPE_T y[3];
     TYPE_T dir[3];
-    TYPE_T min_step, step, Ax, Ad;
+    TYPE_T step_min, step, Ax, Ad;
 
     // active and working set
     int active_set[3];
     int active_set_size = 0;
     int blocking = -1;
-    bool in_set;
 
     // lagrange multipliers
     TYPE_T lambda[3];
-    TYPE_T lambda_best;
-    int lambda_best_idx;
+    int lambda_argmin;
 
     // initialize with input
     for (k = 0; k < 3; k++) {
@@ -303,9 +322,9 @@ __global__ void epigraphproj(TYPE_T *x)
 
     // determine initial feasible guess by increasing y[2] if necessary
     for (l = 0; l < N; l++) {
-        Ax = A[l*2 + 0]*y[0] + A[l*2 + 1]*y[1];
-        if (Ax - y[2] > b[l]) {
-            y[2] = Ax - b[l];
+        Ax = A[l*2 + 0]*y[0] + A[l*2 + 1]*y[1] - y[2];
+        if (Ax > b[l]) {
+            y[2] += Ax - b[l];
             active_set[0] = l;
             active_set_size = 1;
         }
@@ -317,64 +336,57 @@ __global__ void epigraphproj(TYPE_T *x)
     for (_iter = 0; _iter < term_maxiter; _iter++) {
         blocking = -1;
 
-        if (active_set_size > 2) {
-            // Whenever the active set reaches a size of three, it is reduced
-            // at the end of the iteration, according to the current Lagrange
-            // multipliers.
-            printf("Warning: active_set_size=%d at new iter.\n", active_set_size);
-        } else {
-            // explicitely solve equality constrained helper QPs
+        // explicitely solve equality constrained helper QPs
+        for (k = 0; k < 3; k++) {
+            dir[k] = xji[k] - y[k];
+        }
+
+        if (active_set_size == 1) {
+            proj_plane(&A[active_set[0]*2], dir);
+        } else if (active_set_size == 2) {
+            proj_line(&A[active_set[0]*2], &A[active_set[1]*2], dir);
+        }
+
+        if (FABS(dir[0]) + FABS(dir[1]) + FABS(dir[2]) > 0) {
+            // determine smallest step size at which a new (blocking)
+            // constraint enters the active set
+            step_min = 1.0;
+
+            // iterate over constraints not in active set
+            for (k = 0; k < N; k++) {
+                if (-1 != array_index_of(active_set, active_set_size, k)) {
+                    continue;
+                }
+
+                Ax = A[k*2 + 0]*y[0]   + A[k*2 + 1]*y[1]   - y[2];
+                Ad = A[k*2 + 0]*dir[0] + A[k*2 + 1]*dir[1] - dir[2];
+
+                // dir is orthogonal to a0 and a1. However, by the following
+                // check, dir can't be orthogonal to a blocking constraint,
+                // hence (a0,a1,a2) is always linearly independent.
+                if (Ad > term_tolerance) {
+                    step = (b[k] - Ax)/Ad;
+                    if (step < step_min && step > -term_tolerance) {
+                        step_min = step;
+                        blocking = k;
+                    }
+                }
+            }
+
+            // advance
             for (k = 0; k < 3; k++) {
-                dir[k] = xji[k] - y[k];
+                y[k] += step_min*dir[k];
             }
-            if (active_set_size == 1) {
-                proj_plane(&A[active_set[0]*2], dir);
-            } else if (active_set_size == 2) {
-                proj_line(&A[active_set[0]*2], &A[active_set[1]*2], dir);
-            }
+        }
 
-            if (FABS(dir[0]) + FABS(dir[1]) + FABS(dir[2]) > 0) {
-                // determine smallest step size at which a new (blocking)
-                // constraint enters the active set
-                min_step = 1.0;
-
-                // iterate over constraints not in active set
-                for (k = 0; k < N; k++) {
-                    in_set = false;
-                    for (l = 0; l < active_set_size; l++) {
-                        if (active_set[l] == k) { in_set = true; break; }
-                    }
-                    if (in_set) continue;
-
-                    Ax = A[k*2 + 0]*y[0]   + A[k*2 + 1]*y[1]   - y[2];
-                    Ad = A[k*2 + 0]*dir[0] + A[k*2 + 1]*dir[1] - dir[2];
-
-                    // dir is orthogonal to a0 and a1. However, by the following
-                    // check, dir can't be orthogonal to a blocking constraint,
-                    // hence (a0,a1,a2) is always linearly independent.
-                    if (Ad > term_tolerance) {
-                        step = (b[k] - Ax)/Ad;
-                        if (step < min_step && step > -term_tolerance) {
-                            min_step = step;
-                            blocking = k;
-                        }
-                    }
-                }
-
-                // advance
-                for (k = 0; k < 3; k++) {
-                    y[k] += min_step * dir[k];
-                }
-            }
-
-            if (blocking != -1) {
-                // add blocking constraint to active set
-                active_set[active_set_size++] = blocking;
-            } else if (active_set_size == 1) {
-                // moved freely without blocking constraint and at least one
-                // constraint is active at solution -> convergence
-                break;
-            }
+        if (blocking != -1) {
+            // add blocking constraint to active set
+            active_set[active_set_size++] = blocking;
+        } else if (active_set_size == 1) {
+            // no blocking constraint and only one active constraint means
+            // we are at the exact orthogonal projection inside of a facet or
+            // all blocking constraints were sorted out via Lagrange multipliers
+            break;
         }
 
         if (active_set_size == 3 || blocking == -1) {
@@ -382,40 +394,29 @@ __global__ void epigraphproj(TYPE_T *x)
             lambda[0] = xji[0] - y[0];
             lambda[1] = xji[1] - y[1];
             lambda[2] = xji[2] - y[2];
+
             if (active_set_size == 2) {
-                // This is solvable for any RHS since any two rows in A are l.i.
+                // No blocking constraint: y is exact orthogonal projection of
+                // xji onto orth{a0,a1}. Hence, xji-y is in span{a0,a1}.
                 base_trafo_2d(&A[active_set[0]*2], &A[active_set[1]*2], lambda);
             } else if (active_set_size == 3) {
-                // Only way to get here is dir!=0 and a blocking constraint a2.
-                // But in this case (a0,a1,a2) is l.i. (see comment above).
-                // Hence, this is also solvable for any RHS.
+                // dir != 0 and a blocking constraint a2. In this case,
+                // (a0,a1,a2) is linearly independent (see comment above).
                 base_trafo_3d(&A[active_set[0]*2], &A[active_set[1]*2],
                               &A[active_set[2]*2], lambda);
-            } else {
-                printf("Warning: unusual active set size %d.\n", active_set_size);
             }
 
-            // Check positivity of lambda
-            lambda_best = 0.0;
-            lambda_best_idx = -1;
-            for (k = 0; k < active_set_size; k++) {
-                if (lambda[k] < lambda_best) {
-                    lambda_best = lambda[k];
-                    lambda_best_idx = k;
-                }
-            }
-
-            if (lambda_best_idx == -1) {
-                // converged (all Lagrange multipliers in active set positive)
+            lambda_argmin = array_argmin(lambda, active_set_size);
+            if (lambda[lambda_argmin] >= 0.0) {
+                // KKT conditions of full problem are satisfied
                 break;
             } else {
                 // remove most negative lambda from active set
-                active_set[lambda_best_idx] = active_set[--active_set_size];
+                active_set[lambda_argmin] = active_set[--active_set_size];
             }
         }
     }
 
-#if 0
     if (_iter == term_maxiter) {
         printf("Warning: active set method didn't converge within %d iterations "
                "at (%d,%d).\n", term_maxiter, i, j);
@@ -430,7 +431,6 @@ __global__ void epigraphproj(TYPE_T *x)
             break;
         }
     }
-#endif
 
     // write result to input array
     for (k = 0; k < 3; k++) {

@@ -330,25 +330,26 @@ class EpigraphProj(Operator):
         indices = np.zeros((nfuns*nregions,), dtype=np.int64)
         np.cumsum(counts[:-1], out=indices[1:])
         total_count = indices[-1] + counts[-1]
+        max_count = np.amax(counts)
 
         counts = counts.reshape((nfuns, nregions))
         indices = indices.reshape((nfuns, nregions))
 
         np_dtype = np.float64 if type_t == "double" else np.float32
-        A_gpu = np.zeros((total_count,2), dtype=np_dtype)
-        b_gpu = np.zeros((total_count,), dtype=np_dtype)
+        A_store = np.zeros((total_count,2), dtype=np_dtype)
+        b_store = np.zeros((total_count,), dtype=np_dtype)
         for i in range(nfuns):
             for j in range(nregions):
                 mask, idx, count = self.I[i,self.J[j]], indices[i,j], counts[i,j]
-                A_gpu[idx:idx+count,:] = self.v[self.J[j]][mask]
-                b_gpu[idx:idx+count] = self.b[i,self.J[j]][mask]
+                A_store[idx:idx+count,:] = self.v[self.J[j]][mask]
+                b_store[idx:idx+count] = self.b[i,self.J[j]][mask]
 
         constvars = {
             'EPIGRAPH_PROJ': 1,
             'nfuns': nfuns, 'nregions': nregions,
             'counts': counts, 'indices': indices,
-            'A_STORE': A_gpu, 'B_STORE': b_gpu,
-            'term_maxiter': 2500, 'term_tolerance': 1e-9,
+            'A_STORE': A_store, 'B_STORE': b_store,
+            'term_maxiter': 2*max_count, 'term_tolerance': 1e-9,
             'TYPE_T': type_t,
         }
         for f in ['fabs']:
@@ -369,6 +370,7 @@ class EpigraphProj(Operator):
         assert not add
         assert not jacobian
         x = self.x.vars(x)[0]
+        y = x if y is None else self.y.vars(y)[0]
         for i in range(self.I.shape[0]):
             for j in range(self.J.shape[0]):
                 xji = x[j,i]
@@ -392,4 +394,4 @@ class EpigraphProj(Operator):
                 q = -cvxopt.matrix(xji)
                 G = cvxopt.matrix(A)
                 h = cvxopt.matrix(b)
-                xji[:] = np.array(cvxopt.solvers.qp(P, q, G, h)['x']).ravel()
+                y[j,i,:] = np.array(cvxopt.solvers.qp(P, q, G, h)['x']).ravel()

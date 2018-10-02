@@ -380,16 +380,7 @@ class EpigraphProj(Operator):
                 A[:,0:-1] = self.v[self.J[j]][mask]
                 A[:,-1] = -1.0
 
-                #   Now solve
-                # minimize  0.5*||y - xji||**2  s.t.  A y <= b
-                #   or
                 # minimize  0.5*||y||**2 - <xji,y>  s.t.  A y <= b
-                #   which is equivalent to
-                # minimize 0.5*||A' z||**2 - <A xji - b,z> s.t. z >= 0
-                #   or
-                # minimize 0.5*||A' z - xji||**2 + <b,z> s.t. z >= 0
-                #   for y = xji - A' z.
-
                 P = cvxopt.spmatrix(1.0, range(b.size), range(b.size))
                 q = -cvxopt.matrix(xji)
                 G = cvxopt.matrix(A)

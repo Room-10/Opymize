@@ -16,6 +16,7 @@ class PDHG(object):
         self.itervars = {} # xk, yk, etc.
         self.constvars = {}
         self.use_gpu = False
+        self.info = {}
 
     def obj_primal(self, x, Ax):
         obj, infeas = self.g(x)
@@ -37,15 +38,6 @@ class PDHG(object):
             'infeasp': infeas_p,
             'infeasd': infeas_d,
             'relgap': (obj_p - obj_d) / max(np.spacing(1), obj_d)
-        }
-
-    def pd_res(self, eps_absp, eps_relp, eps_absd, eps_reld):
-        i = self.itervars
-        return {
-            'resp': i['res_pk'],
-            'resd': i['res_dk'],
-            'epsp': np.sqrt(i['xk'].size)*eps_absp + eps_relp*i['gnorm_pk'],
-            'epsd': np.sqrt(i['yk'].size)*eps_absd + eps_reld*i['gnorm_dk'],
         }
 
 
@@ -162,22 +154,26 @@ class PDHG(object):
         if 'adaptive' in c:
             res_argsp = [  tau, xk, xkp1,     1, xgradk,     1, xgradkp1]
             res_argsd = [sigma, yk, ykp1, theta, ygradk, theta, ygradkp1]
-            i['res_pk'] = self.residual(*res_argsp)
-            i['res_dk'] = self.residual(*res_argsd)
-            if compute_gnorms:
-                res_argsp[5] -= 1
-                res_argsd[5] += 1
-                i['gnorm_pk'] = self.residual(*res_argsp)
-                i['gnorm_dk'] = self.residual(*res_argsd)
+            self.info['resp'] = self.residual(*res_argsp)
+            self.info['resd'] = self.residual(*res_argsd)
+            res_argsp[5] -= 1
+            res_argsd[5] += 1
+            gnorm_pk = self.residual(*res_argsp)
+            gnorm_dk = self.residual(*res_argsd)
 
-            if i['res_pk'] > c['s']*i['res_dk']*c['Delta']:
+            eps_absp, eps_relp, eps_absd, eps_reld = self.info['epspd']
+            self.info['epsp'] = np.sqrt(xk.size)*eps_absp + eps_relp*gnorm_pk
+            self.info['epsd'] = np.sqrt(yk.size)*eps_absd + eps_reld*gnorm_dk
+            scale = self.info['epsd']/self.info['epsp']
+
+            if self.info['resp'] > scale*self.info['resd']*c['Delta']:
                 i['tauk'] *= 1.0/(1.0 - i['alphak'])
                 i['sigmak'] *= (1.0 - i['alphak'])
                 i['alphak'] *= c['eta']
                 self.gprox = self.g.prox(i['tauk'])
                 self.fconjprox = self.f.conj.prox(i['sigmak'])
 
-            if i['res_pk'] < c['s']*i['res_dk']/c['Delta']:
+            if self.info['resp'] < scale*self.info['resd']/c['Delta']:
                 i['tauk'] *= (1.0 - i['alphak'])
                 i['sigmak'] *= 1.0/(1.0 - i['alphak'])
                 i['alphak'] *= c['eta']
@@ -213,11 +209,8 @@ class PDHG(object):
                 c['adaptive'] = True
                 c['eta'] = 0.95 # 0 < eta < 1
                 c['Delta'] = 1.5 # > 1
-                c['s'] = 255.0 # > 0
                 i['alphak'] = 0.5
                 i['sigmak'] = i['tauk'] = np.sqrt(bnd)
-                i['res_pk'] = i['res_dk'] = 0.0
-                i['gnorm_pk'] = i['gnorm_dk'] = 0.0
                 self.gprox = self.g.prox(i['tauk'])
                 self.fconjprox = self.f.conj.prox(i['sigmak'])
                 logging.info("Adaptive steps: %f" % (bnd,))
@@ -259,11 +252,11 @@ class PDHG(object):
                 term_pd_res = (term_pd_res,)*4
             else:
                 assert len(term_pd_res) == 4
+            self.info['epspd'] = term_pd_res
         elif type(term_pd_gap) is not tuple:
             # tolerances for relative pd-gap and infeasibilities
             term_pd_gap = (term_pd_gap, term_pd_gap)
 
-        info = {}
         c['theta'] = 1.0 # overrelaxation
         self.prepare_stepsizes(step_bound, step_factor, steps)
         if use_gpu: self.prepare_gpu(type_t=precision)
@@ -290,17 +283,16 @@ class PDHG(object):
                             self.gpu_itervars[n].get(ary=i[n])
 
                     if pd_res_mode:
-                        info = self.pd_res(*term_pd_res)
                         logging.info("#{:6d}: res_p = {: 9.6g} ({: 9.6g}), " \
                             "res_d = {: 9.6g} ({: 9.6g}), ".format(
-                            _iter, info['resp'], info['epsp'],
-                            info['resd'], info['epsd']
+                            _iter, self.info['resp'], self.info['epsp'],
+                            self.info['resd'], self.info['epsd']
                         ))
-                        test_p = info['resp'] < info['epsp']
-                        test_d = info['resd'] < info['epsd']
+                        test_p = self.info['resp'] < self.info['epsp']
+                        test_d = self.info['resd'] < self.info['epsd']
                         test_term = test_p and test_d
                     else:
-                        info = self.pd_gap()
+                        self.info.update(self.pd_gap())
                         logging.info("#{:6d}: objp = {: 9.6g} ({: 9.6g}), " \
                             "objd = {: 9.6g} ({: 9.6g}), " \
                             "gap = {: 9.6g}, " \
@@ -310,16 +302,16 @@ class PDHG(object):
                             info['objp'] - info['objd'],
                             info['relgap']
                         ))
-                        test_err = np.abs(info['relgap']) < term_pd_gap[0]
-                        infeasp, infeasd = info['infeasp'], info['infeasd']
+                        test_err = np.abs(self.info['relgap']) < term_pd_gap[0]
+                        infeasp, infeasd = self.info['infeasp'], self.info['infeasd']
                         test_infeas = max(infeasp, infeasd) < term_pd_gap[1]
                         test_term = test_err and test_infeas
 
                     if test_term or interrupt_hdl.interrupted:
                         break
 
-        info['iter'] = _iter
-        return info
+        self.info['iter'] = _iter
+        return self.info
 
     @property
     def state(self):

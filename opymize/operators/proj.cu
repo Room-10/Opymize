@@ -185,40 +185,35 @@ inline __device__ void base_trafo_2d(TYPE_T *a0, TYPE_T *a1, TYPE_T *g)
     g[0] = - g[2] - g[1];
 }
 
-inline __device__ void swap_vars(TYPE_T *a, TYPE_T *b)
-{
-  TYPE_T c = a[0]; a[0] = b[0]; b[0] = c;
-}
-
-inline __device__ void solve_2x2(TYPE_T *A, TYPE_T *b)
+inline __device__ bool solve_2x2(TYPE_T *A, TYPE_T *b)
 {
     /* Solve a 2x2 linear system of equations.
      *
-     * If singular, the projection of b onto span{a0} is returned, i.e.:
-     *
-     *      b[0] = <b,a0>/<a0,a0>,   b[1] = 0.
+     * If singular, nothing is written and `false` is returned (else `true`).
      *
      * The result is stored in b.
      */
 
     TYPE_T detA = A[0]*A[3] - A[1]*A[2];
-    TYPE_T alpha, beta, gamma;
+    TYPE_T res0, res1;
+    int row0 = 0;
+    int row1 = 1;
 
     if (FABS(detA) < 1e-9) {
         printf("Warning: Singular matrix in solve_2x2, det(A)=%g\n", detA);
-        b[0] = (b[0]*A[0] + b[1]*A[2])/(A[0]*A[0] + A[2]*A[2]);
-        b[1] = 0;
+        return false;
     } else {
-        if(FABS(A[0]) < FABS(A[2])) {
-            swap_vars(&A[2], &A[0]);
-            swap_vars(&A[3], &A[1]);
-            swap_vars(&b[0], &b[1]);
+        if(FABS(A[row0*2 + 0]) < FABS(A[row1*2 + 0])) {
+            // swap rows for numerical stability
+            row0 = 1; row1 = 0;
         }
-        alpha = A[2]/A[0];
-        beta = A[3] - A[1]*alpha;
-        gamma = b[1] - b[0]*alpha;
-        b[1] = gamma/beta;
-        b[0] = (b[0] - A[1]*b[1])/A[0];
+        res1 = A[row1*2 + 0]/A[row0*2 + 0];
+        res0 = A[row1*2 + 1] - A[row0*2 + 1]*res1;
+        res1 = (b[row1] - b[row0]*res1)/res0;
+        res0 = (b[row0] - A[row0*2 + 1]*res1)/A[row0*2 + 0];
+        b[0] = res0;
+        b[1] = res1;
+        return true;
     }
 }
 
@@ -354,6 +349,9 @@ __global__ void epigraphproj(TYPE_T *x)
                     Ax = A[k*2 + 0]*y[0]   + A[k*2 + 1]*y[1]   - y[2];
                     Ad = A[k*2 + 0]*dir[0] + A[k*2 + 1]*dir[1] - dir[2];
 
+                    // dir is orthogonal to a0 and a1. However, by the following
+                    // check, dir can't be orthogonal to a blocking constraint,
+                    // hence (a0,a1,a2) is always linearly independent.
                     if (Ad > term_tolerance) {
                         step = (b[k] - Ax)/Ad;
                         if (step < min_step && step > -term_tolerance) {
@@ -385,11 +383,12 @@ __global__ void epigraphproj(TYPE_T *x)
             lambda[1] = xji[1] - y[1];
             lambda[2] = xji[2] - y[2];
             if (active_set_size == 2) {
-                // this is solvable for any RHS due to the properties of A
+                // This is solvable for any RHS since any two rows in A are l.i.
                 base_trafo_2d(&A[active_set[0]*2], &A[active_set[1]*2], lambda);
             } else if (active_set_size == 3) {
-                // only way to get here is dir != 0 and a blocking constraint
-                // always solvable?
+                // Only way to get here is dir!=0 and a blocking constraint a2.
+                // But in this case (a0,a1,a2) is l.i. (see comment above).
+                // Hence, this is also solvable for any RHS.
                 base_trafo_3d(&A[active_set[0]*2], &A[active_set[1]*2],
                               &A[active_set[2]*2], lambda);
             } else {

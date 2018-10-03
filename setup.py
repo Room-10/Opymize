@@ -16,7 +16,7 @@ setup(
     keywords='convex optimization pdhg',
     packages=find_packages(),
     package_data={'': ['*.cu']},
-    install_requires=['numpy','numba'],
+    install_requires=['numpy','numba','cvxopt'],
     extras_require={ 'cuda': ['pycuda'], },
     project_urls={ 'Source': 'https://github.com/room-10/Opymize/', },
 )

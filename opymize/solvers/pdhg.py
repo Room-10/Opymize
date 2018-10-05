@@ -37,6 +37,7 @@ class PDHG(object):
             'objd': obj_d,
             'infeasp': infeas_p,
             'infeasd': infeas_d,
+            'gap': obj_p - obj_d,
             'relgap': (obj_p - obj_d) / max(np.spacing(1), obj_d)
         }
 
@@ -297,10 +298,9 @@ class PDHG(object):
                             "objd = {: 9.6g} ({: 9.6g}), " \
                             "gap = {: 9.6g}, " \
                             "relgap = {: 9.6g} ".format(
-                            _iter, info['objp'], info['infeasp'],
-                            info['objd'], info['infeasd'],
-                            info['objp'] - info['objd'],
-                            info['relgap']
+                            _iter, self.info['objp'], self.info['infeasp'],
+                            self.info['objd'], self.info['infeasd'],
+                            self.info['gap'], self.info['relgap']
                         ))
                         test_err = np.abs(self.info['relgap']) < term_pd_gap[0]
                         infeasp, infeasd = self.info['infeasp'], self.info['infeasd']

@@ -197,7 +197,7 @@ class L1NormsProj(Operator):
         for f in ['fmin','fmax','sqrt','hypot']:
             constvars[f.upper()] = f if type_t == "double" else (f+"f")
         files = [resource_stream('opymize.operators', 'proj.cu')]
-        templates = [("l1normsproj", "P", (self.N, 1, 1), (640, 1, 1))]
+        templates = [("l1normsproj", "P", (self.N, 1, 1), (200, 1, 1))]
         self._kernel = prepare_kernels(files, templates, constvars)['l1normsproj']
 
     def _call_gpu(self, x, y=None, add=False, jacobian=False):

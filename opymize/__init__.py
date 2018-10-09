@@ -5,98 +5,43 @@ class Variable(object):
     def __init__(self, *args):
         if len(args) == 1 and type(args[0]) in [np.int64,int]:
             args = [(args[0],)]
-        self._descr = []
+        if type(args[0][0]) is not str:
+            args = list([('v%d'%i, a) for i,a in enumerate(args)])
+        self._descr = {}
         self._args = args
         self.size = 0
-        for dim in args:
-            self._descr.append({
+        for name, dim in args:
+            self._descr[name] = {
+                'name': name,
                 'offset': self.size,
-                'shape': dim
-            })
+                'shape': dim,
+                'size': np.prod(dim)
+            }
             self.size += np.prod(dim)
 
-    def vars(self, data=None):
+    def vars(self, data=None, named=False):
         if data is None:
-            return self._descr
+            if named:
+                return self._descr
+            else:
+                return [self._descr[a[0]] for a in self._args]
 
-        result = []
-        for d in self._descr:
-            size = np.prod(d['shape'])
-            result.append(data[d['offset']:d['offset']+size].reshape(d['shape']))
+        result = {} if named else [None for a in self._args]
+        for i,a in enumerate(self._args):
+            d = self._descr[a[0]]
+            start, end = d['offset'], d['offset']+np.prod(d['shape'])
+            idx = d['name'] if named else i
+            result[idx] = data[start:end].reshape(d['shape'])
         return result
 
     def __getitem__(self, idx):
-        return self._descr[idx]
+        if type(idx) is str:
+            return self._descr[idx]
+        else:
+            return self._descr[self._args[idx][0]]
 
     def new(self, dtype=np.float64):
         return np.zeros((self.size,), order='C', dtype=dtype)
-
-class BlockVar(object):
-    def __init__(self, *args):
-        self._descr = {}
-        self._args = args
-        for a in args:
-            self._append(*a)
-        self.size = self._size() # size is fixed after init
-        self.data = np.zeros((self.size,), order='C')
-
-    def _append(self, name, dim):
-        offset = self._size()
-        self._descr[name] = (offset, dim)
-
-    def _size(self):
-        return sum([np.prod(d[1]) for d in self._descr.values()])
-
-    def copy(self):
-        cpy = BlockVar(*self._args)
-        cpy.data[:] = self.data
-        return cpy
-
-    def vars(self):
-        return [self[a[0]] for a in self._args]
-
-    def __getitem__(self, idx):
-        if isinstance(idx, str):
-            offset, dim = self._descr[idx]
-            size = np.prod(dim)
-            return self.data[offset:offset+size].reshape(dim)
-        else:
-            return self.data[idx]
-
-    def __setitem__(self, idx, value):
-        if isinstance(idx, str):
-            offset, dim = self._descr[idx]
-            size = np.prod(dim)
-            self.data[offset:offset+size] = value
-        else:
-            if isinstance(value, BlockVar):
-                value = value.data
-            self.data[idx] = value
-
-    def __sub__(self, other):
-        return self + (-1.0)*other
-
-    def __add__(self, other):
-        if isinstance(other, BlockVar):
-            other = other.data
-        out = self.copy()
-        out.data[:] += other
-        return out
-
-    def __rmul__(self, scalar):
-        out = self.copy()
-        out.data[:] *= scalar
-        return out
-
-    def __mul__(self, scalar):
-        return scalar*self
-
-    def __str__(self):
-        return self.data.__str__()
-
-    def __iter__(self):
-        for d in self._args:
-            yield { 'name': d[0], 'offset': self._descr[d[0]][0] }
 
 class Operator(object):
     """ Representation of a mathematical operator T """

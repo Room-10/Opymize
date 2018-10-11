@@ -41,7 +41,6 @@ class PDHG(object):
             'relgap': (obj_p - obj_d) / max(np.spacing(1), obj_d)
         }
 
-
     def prepare_gpu(self, type_t="double"):
         import opymize.tools.gpu # gpu init
         from pycuda import gpuarray
@@ -242,6 +241,10 @@ class PDHG(object):
         i.update([(s,i['xk'].copy()) for s in ['xkp1','xgradk','xgradkp1']])
         i.update([(s,i['yk'].copy()) for s in ['ykp1','ygradk','ygradkp1','ygradbk']])
 
+        mem = (i['xk'].nbytes*4 + i['yk'].nbytes*5) // (1024*1024)
+        logging.info("%d/%d (primal/dual) variables, %d MB of memory"
+            % (i['xk'].size, i['yk'].size, mem))
+
         self.linop(i['xk'], i['ygradk'])
         self.linop.adjoint(i['yk'], i['xgradk'])
 
@@ -261,10 +264,6 @@ class PDHG(object):
         c['theta'] = 1.0 # overrelaxation
         self.prepare_stepsizes(step_bound, step_factor, steps)
         if use_gpu: self.prepare_gpu(type_t=precision)
-
-        mem = (i['xk'].nbytes*4 + i['yk'].nbytes*5) // (1024*1024)
-        logging.info("%d/%d (primal/dual) variables, %d MB of memory"
-            % (i['xk'].size, i['yk'].size, mem))
 
         logging.info("Solving (steps<%d)..." % term_maxiter)
 

@@ -324,32 +324,13 @@ class EpigraphProj(Operator):
         nfuns, npoints = self.I.shape
         nregions, nsubpoints = self.J.shape
 
-        counts = np.zeros((nfuns*nregions,), dtype=np.int32)
-        counts[:] = [np.count_nonzero(Ii[Jj]) for Ii in self.I for Jj in self.J]
-
-        indices = np.zeros((nfuns*nregions,), dtype=np.int64)
-        np.cumsum(counts[:-1], out=indices[1:])
-        total_count = indices[-1] + counts[-1]
-        max_count = np.amax(counts)
-
-        counts = counts.reshape((nfuns, nregions))
-        indices = indices.reshape((nfuns, nregions))
-
-        np_dtype = np.float64 if type_t == "double" else np.float32
-        A_store = np.zeros((total_count,2), dtype=np_dtype)
-        b_store = np.zeros((total_count,), dtype=np_dtype)
-        for i in range(nfuns):
-            for j in range(nregions):
-                mask, idx, count = self.I[i,self.J[j]], indices[i,j], counts[i,j]
-                A_store[idx:idx+count,:] = self.v[self.J[j]][mask]
-                b_store[idx:idx+count] = self.b[i,self.J[j]][mask]
-
         constvars = {
             'EPIGRAPH_PROJ': 1,
             'nfuns': nfuns, 'nregions': nregions,
-            'counts': counts, 'indices': indices,
-            'A_STORE': A_store, 'B_STORE': b_store,
-            'term_maxiter': 2*max_count, 'term_tolerance': 1e-9,
+            'npoints': npoints, 'nsubpoints': nsubpoints,
+            'I': self.I, 'J': self.J,
+            'A_STORE': self.v, 'B_STORE': self.b,
+            'term_maxiter': 2*nsubpoints, 'term_tolerance': 1e-9,
             'TYPE_T': type_t,
         }
         for f in ['fabs']:

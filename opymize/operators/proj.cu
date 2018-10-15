@@ -260,49 +260,34 @@ inline __device__ int array_argmin(TYPE_T *array, TYPE_T array_size) {
     return argmin;
 }
 
-__global__ void epigraphproj(TYPE_T *x)
+inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T *sol)
 {
-    /* This function solves, for fixed j and i,
+    /* This function solves
      *
-     *      minimize  0.5*||y - x[j,i]||**2
-     *          s.t.  A[i,j] y <= b[i,j],
+     *      minimize  0.5*||y - x||**2   s.t.  A y <= b,
      *
      * using an active set method that assumes that at most three constraints
-     * are active at the same time (which can be satisfied in the case where the
-     * A[i,j] come from polyhedral epigraphs of convex functions).
+     * are active at the same time.
      *
      * For more details see Algorithm 16.3 in
      *
      *      Nocedal, Wright: Numerical Optimization (2nd Ed.). Springer, 2006.
      *
-     * The matrices A are of shape (N,3), but the last column is not stored in
-     * memory because it has the constant value -1.
      *
-     * The result is stored in x[j,i].
+     *  Args:
+     *      x : shape (3,)
+     *      A : shape (N,2); the matrix A is actually of shape (N,3), but the
+     *          last column is not stored in memory because it has the constant
+     *          value -1
+     *      b : shape (N,)
+     *      N : number of inequality constraints
+     *      sol : shape (3,), the result is stored in `sol`
      */
-
-    // global thread index
-    int j = blockIdx.x*blockDim.x + threadIdx.x;
-    int i = blockIdx.y*blockDim.y + threadIdx.y;
-
-    // stay inside maximum dimensions
-    if (j >= nregions || i >= nfuns) return;
 
     // iteration variables
     int k, l, _iter;
 
-    // N : number of inequality constraints
-    // A : shape (N,2)
-    // b : shape (N,)
-    // xji : shape (3,)
-    int N = counts[i*nregions + j];
-    TYPE_T *A = &A_STORE[2*indices[i*nregions + j]];
-    TYPE_T *b = &B_STORE[indices[i*nregions + j]];
-    TYPE_T *xji = &x[(j*nfuns + i)*3];
-
-    // y : iteration variable
     // dir : search direction
-    TYPE_T y[3];
     TYPE_T dir[3];
     TYPE_T step_min, step, Ax, Ad;
 
@@ -317,14 +302,14 @@ __global__ void epigraphproj(TYPE_T *x)
 
     // initialize with input
     for (k = 0; k < 3; k++) {
-        y[k] = xji[k];
+        sol[k] = x[k];
     }
 
-    // determine initial feasible guess by increasing y[2] if necessary
+    // determine initial feasible guess by increasing sol[2] if necessary
     for (l = 0; l < N; l++) {
-        Ax = A[l*2 + 0]*y[0] + A[l*2 + 1]*y[1] - y[2];
+        Ax = A[l][0]*sol[0] + A[l][1]*sol[1] - sol[2];
         if (Ax > b[l]) {
-            y[2] += Ax - b[l];
+            sol[2] += Ax - b[l];
             active_set[0] = l;
             active_set_size = 1;
         }
@@ -338,13 +323,13 @@ __global__ void epigraphproj(TYPE_T *x)
 
         // explicitely solve equality constrained helper QPs
         for (k = 0; k < 3; k++) {
-            dir[k] = xji[k] - y[k];
+            dir[k] = x[k] - sol[k];
         }
 
         if (active_set_size == 1) {
-            proj_plane(&A[active_set[0]*2], dir);
+            proj_plane(A[active_set[0]], dir);
         } else if (active_set_size == 2) {
-            proj_line(&A[active_set[0]*2], &A[active_set[1]*2], dir);
+            proj_line(A[active_set[0]], A[active_set[1]], dir);
         }
 
         if (FABS(dir[0]) + FABS(dir[1]) + FABS(dir[2]) > 0) {
@@ -358,8 +343,8 @@ __global__ void epigraphproj(TYPE_T *x)
                     continue;
                 }
 
-                Ax = A[k*2 + 0]*y[0]   + A[k*2 + 1]*y[1]   - y[2];
-                Ad = A[k*2 + 0]*dir[0] + A[k*2 + 1]*dir[1] - dir[2];
+                Ax = A[k][0]*sol[0]   + A[k][1]*sol[1]   - sol[2];
+                Ad = A[k][0]*dir[0] + A[k][1]*dir[1] - dir[2];
 
                 // dir is orthogonal to a0 and a1. However, by the following
                 // check, dir can't be orthogonal to a blocking constraint,
@@ -375,7 +360,7 @@ __global__ void epigraphproj(TYPE_T *x)
 
             // advance
             for (k = 0; k < 3; k++) {
-                y[k] += step_min*dir[k];
+                sol[k] += step_min*dir[k];
             }
         }
 
@@ -391,19 +376,19 @@ __global__ void epigraphproj(TYPE_T *x)
 
         if (active_set_size == 3 || blocking == -1) {
             // compute Lagrange multipliers lambda
-            lambda[0] = xji[0] - y[0];
-            lambda[1] = xji[1] - y[1];
-            lambda[2] = xji[2] - y[2];
+            lambda[0] = x[0] - sol[0];
+            lambda[1] = x[1] - sol[1];
+            lambda[2] = x[2] - sol[2];
 
             if (active_set_size == 2) {
-                // No blocking constraint: y is exact orthogonal projection of
-                // xji onto orth{a0,a1}. Hence, xji-y is in span{a0,a1}.
-                base_trafo_2d(&A[active_set[0]*2], &A[active_set[1]*2], lambda);
+                // No blocking constraint: sol is exact orthogonal projection of
+                // x onto orth{a0,a1}. Hence, x-sol is in span{a0,a1}.
+                base_trafo_2d(A[active_set[0]], A[active_set[1]], lambda);
             } else if (active_set_size == 3) {
                 // dir != 0 and a blocking constraint a2. In this case,
                 // (a0,a1,a2) is linearly independent (see comment above).
-                base_trafo_3d(&A[active_set[0]*2], &A[active_set[1]*2],
-                              &A[active_set[2]*2], lambda);
+                base_trafo_3d(A[active_set[0]], A[active_set[1]],
+                              A[active_set[2]], lambda);
             }
 
             lambda_argmin = array_argmin(lambda, active_set_size);
@@ -418,23 +403,60 @@ __global__ void epigraphproj(TYPE_T *x)
     }
 
     if (_iter == term_maxiter) {
-        printf("Warning: active set method didn't converge within %d iterations "
-               "at (%d,%d).\n", term_maxiter, i, j);
+        printf("Warning: active set method didn't converge within %d "
+               "iterations.\n", term_maxiter);
     }
 
+#if 0
     // check feasibility of result
     for (l = 0; l < N; l++) {
-        Ax = A[l*2 + 0]*y[0] + A[l*2 + 1]*y[1] - y[2];
+        Ax = A[l][0]*sol[0] + A[l][1]*sol[1] - sol[2];
         if (Ax - b[l] > 1e-3) {
-            printf("Warning: solution is not primal feasible at (%d,%d): "
-                   "diff=%g.\n", i, j, Ax - b[l]);
+            printf("Warning: solution is not primal feasible: "
+                   "diff=%g.\n", Ax - b[l]);
             break;
         }
     }
+#endif
+}
 
-    // write result to input array
+__global__ void epigraphproj(TYPE_T *x)
+{
+    /* This function solves, for fixed j and i,
+     *
+     *      minimize  0.5*||y - x[j,i]||**2
+     *          s.t.  A[i,j] y <= b[i,j],
+     *
+     * using an active set method. The result is stored in x[j,i].
+     */
+
+    // global thread index
+    int j = blockIdx.x*blockDim.x + threadIdx.x;
+    int i = blockIdx.y*blockDim.y + threadIdx.y;
+
+    // stay inside maximum dimensions
+    if (j >= nregions || i >= nfuns) return;
+
+    int k, l;
+    TYPE_T result[3];
+    TYPE_T *xji = &x[(j*nfuns + i)*3];
+    TYPE_T *Aij[nsubpoints];
+    TYPE_T bij[nsubpoints];
+
+    // set up constraints
+    int Nij = 0;
+    for (k = 0; k < nsubpoints; k++) {
+        l = J[j*nsubpoints + k];
+        if (I[i*npoints + l]) {
+            Aij[Nij] = &A_STORE[l*2];
+            bij[Nij++] = B_STORE[i*npoints + l];
+        }
+    }
+
+    // solve and write result to input array
+    solve_qp(xji, Aij, bij, Nij, result);
     for (k = 0; k < 3; k++) {
-        xji[k] = y[k];
+        xji[k] = result[k];
     }
 }
 #endif

@@ -1,5 +1,5 @@
 
-__device__ int* i2coords(int i) {
+inline __device__ int* i2coords(int i) {
     int aa;
     int coords[D];
     for (aa = D - 1; aa >= 0; aa--) {
@@ -9,7 +9,8 @@ __device__ int* i2coords(int i) {
     return coords;
 }
 
-__device__ int is_br_boundary(int i) {
+#ifdef GRAD_DIV
+inline __device__ int is_br_boundary(int i) {
     int aa;
     int* coords = i2coords(i);
     for (aa = 0; aa < D; aa++) {
@@ -20,7 +21,7 @@ __device__ int is_br_boundary(int i) {
     return false;
 }
 
-__device__ int avgskip_allowed(int t, int *coords, int d) {
+inline __device__ int avgskip_allowed(int t, int *coords, int d) {
     int aa, dk;
     for (aa = D - 1; aa >= 0; aa--) {
         dk = d / skips[aa];
@@ -53,7 +54,7 @@ __global__ void gradient(TYPE_T *x, TYPE_T *y)
     newval = 0.0;
     fac = weights[k]/(TYPE_T)navgskips;
 
-    // skip points on "bottom right" boundary
+    // skip points on "bottom or right" boundary
     if (!is_br_boundary(i)) {
         for (aa = 0; aa < navgskips; aa++) {
             base = i + avgskips[t*navgskips + aa];
@@ -101,3 +102,42 @@ __global__ void divergence(TYPE_T *x, TYPE_T *y)
 
     y[i*C + k] += fac*newval;
 }
+#endif
+
+#ifdef LAPLACIAN
+__global__ void laplacian(TYPE_T *x, TYPE_T *y)
+{
+    // y += \Delta x (\Delta is the Laplacian with Neumann boundary)
+
+    // global thread index
+    int i = blockIdx.x*blockDim.x + threadIdx.x;
+    int k = blockIdx.y*blockDim.y + threadIdx.y;
+
+    // stay inside maximum dimensions
+    if (i >= N || k >= C) return;
+
+    // iteration variable and misc.
+    int tt;
+    int* coords = i2coords(i);
+    TYPE_T newval;
+
+    newval = -2*D*x[i*C + k];
+
+    // skip points on "bottom right" boundary
+    for (tt = 0; tt < D; tt++) {
+        if (coords[tt] > 0) {
+            newval += x[(i - skips[tt])*C + k];
+        } else {
+            newval += x[i*C + k];
+        }
+
+        if (coords[tt] < imagedims[tt]-1) {
+            newval += x[(i + skips[tt])*C + k];
+        } else {
+            newval += x[i*C + k];
+        }
+    }
+
+    y[i*C + k] += newval;
+}
+#endif

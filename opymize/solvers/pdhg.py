@@ -10,6 +10,8 @@ from numpy.linalg import norm
 
 class PDHG(object):
     def __init__(self, g, f, A):
+        assert A.x.size == g.x.size
+        assert A.y.size == f.x.size
         self.g = g
         self.f = f
         self.linop = A

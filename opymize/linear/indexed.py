@@ -48,6 +48,8 @@ class IndexedMultAdj(LinOp):
     """ for k,l,i do (Ax)[i,P[j,l]] -= \sum_m B[j,m,l] * x[j,i,m] """
     def __init__(self, K, N, P, B, adjoint=None):
         LinOp.__init__(self)
+        assert P.shape[0] == B.shape[0]
+        assert P.shape[1] == B.shape[2]
         self.x = Variable((B.shape[0],N,B.shape[1]))
         self.y = Variable((N,K))
         self.P = P
@@ -87,6 +89,8 @@ class IndexedMult(LinOp):
     """ (Ax)[j,i,m] -= \sum_l B[j,m,l] * x[i,P[j,l]] """
     def __init__(self, K, N, B, P, adjoint=None):
         LinOp.__init__(self)
+        assert P.shape[0] == B.shape[0]
+        assert P.shape[1] == B.shape[2]
         self.x = Variable((N,K))
         self.y = Variable((B.shape[0],N,B.shape[1]))
         self.P = P

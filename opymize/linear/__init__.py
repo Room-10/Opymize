@@ -74,11 +74,22 @@ class BlockOp(LinOp):
                     blocks[i][j] = ZeroOp(y_sizes[i], x_sizes[j])
         self.blocks = blocks
 
-        # build adjoint matrix
-        adj_bl = []
-        for j,_ in enumerate(blocks[0]):
-            adj_bl.append([b[j].adjoint for b in self.blocks])
-        self.adjoint = BlockOp(adj_bl, adjoint=self) if adjoint is None else adjoint
+        # check block dimensions for consistency
+        for i,Bi in enumerate(self.blocks):
+            for j,Bij in enumerate(Bi):
+                if Bij.y.size != self.blocks[i][0].y.size:
+                    print("check_blockdims: y-problem in (%d,%d)" % (i,j))
+                if Bij.x.size != self.blocks[0][j].x.size:
+                    print("check_blockdims: x-problem in (%d,%d)" % (i,j))
+
+        if adjoint is None:
+            # build adjoint matrix
+            adj_bl = []
+            for j,_ in enumerate(blocks[0]):
+                adj_bl.append([b[j].adjoint for b in self.blocks])
+            self.adjoint = BlockOp(adj_bl, adjoint=self)
+        else:
+            self.adjoint = adjoint
 
     def prepare_gpu(self, type_t="double"):
         for i,Bi in enumerate(self.blocks):

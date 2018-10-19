@@ -13,12 +13,12 @@ except:
 
 class ZeroOp(LinOp):
     """ (Ax)_i = 0 """
-    def __init__(self, N, M=None):
+    def __init__(self, M, N=None, adjoint=None):
         LinOp.__init__(self)
-        M = N if M is None else M
+        N = M if N is None else N
         self.x = Variable(N)
         self.y = Variable(M)
-        self.adjoint = self
+        self.adjoint = ZeroOp(N, M, adjoint=self) if adjoint is None else adjoint
         self._call_cpu = self._call_gpu = self._call
 
     def _call(self, x, y=None, add=False):

@@ -17,9 +17,9 @@ except:
 def imagedim_skips(imagedims):
     D = len(imagedims)
     skips = np.zeros(D, dtype=np.int64)
-    skips[0] = 1
-    for t in range(1, D):
-        skips[t] = skips[t-1]*imagedims[D-t]
+    skips[-1] = 1
+    for t in range(D-2,-1,-1):
+        skips[t] = skips[t+1]*imagedims[t+1]
     return skips
 
 def staggered_diff_avgskips(imagedims):
@@ -54,9 +54,9 @@ def staggered_diff(x, y, b, avgskips, imagedims, adjoint=False, precond=False):
         b : weights for the features/channels of x
         avgskips : output of staggered_diff_avgskips(imagedims)
         imagedims : tuple, shape of the image domain
-        adjoint : (optional) if True, apply the adjoint operator (reading from y
+        adjoint : optionally apply the adjoint operator (reading from y
                   and writing to x), i.e. `x[i,k] -= b[k] * div[i,:,:]y[:,:,k]`.
-        precond : Computes rowwise/colwise L1 norm of `diag(b)D`.
+        precond : optionally compute rowwise/colwise L1 norm of `diag(b)D`.
     """
     N, D, C = y.shape
     navgskips =  1 << (D - 1)
@@ -65,7 +65,7 @@ def staggered_diff(x, y, b, avgskips, imagedims, adjoint=False, precond=False):
 
     for k in range(C):
         for t in range(D):
-            coords *= 0
+            coords.fill(0.0)
             for i in range(N):
                 # ignore boundary points
                 in_range = True
@@ -255,7 +255,7 @@ def laplacian(x, y, imagedims, precond=False):
         x : function to be derived, shape (N,C)
         y : Laplacian, shape (N,C)
         imagedims : tuple, shape of the image domain
-        precond : Computes rowwise/colwise L1 norm of `Delta`.
+        precond : optionally compute rowwise/colwise L1 norm of `Delta`.
     """
     N, C = y.shape
     D = len(imagedims)
@@ -263,7 +263,7 @@ def laplacian(x, y, imagedims, precond=False):
     coords = np.zeros(D, dtype=np.int64)
 
     for k in range(C):
-        coords *= 0
+        coords.fill(0.0)
         for i in range(N):
             y[i,k] += 2*D if precond else -2*D*x[i,k]
             for t in range(D):
@@ -300,7 +300,7 @@ class LaplacianOp(LinOp):
     def prepare_gpu(self, type_t="double"):
         if self._kernel is not None: return
         N = np.prod(self.imagedims)
-        skips = imagedim_skips(imagedims)
+        skips = imagedim_skips(self.imagedims)
         constvars = {
             'LAPLACIAN': 1,
             'N': N, 'D': len(self.imagedims), 'C': self.C,

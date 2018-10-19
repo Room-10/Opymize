@@ -51,7 +51,7 @@ def test_adjoint(op):
     Ax = 0*y
     op(x, Ax)
     op.adjoint(y, ATy)
-    assert(np.abs(np.sum(Ax*y) - np.sum(x*ATy)) < 1e-10)
+    assert(np.abs(Ax.dot(y) - x.dot(ATy)) < 1e-10)
     print("adjoint operator tested successfully")
 
 def test_rowwise_lp(op, p=1, maxiter=10):

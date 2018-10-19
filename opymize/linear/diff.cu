@@ -2,8 +2,8 @@
 inline __device__ int* i2coords(int i) {
     int aa;
     int coords[D];
-    for (aa = D - 1; aa >= 0; aa--) {
-        coords[D - 1 - aa] = i / skips[aa];
+    for (aa = 0; aa < D; aa++) {
+        coords[aa] = i / skips[aa];
         i = i % skips[aa];
     }
     return coords;
@@ -23,12 +23,12 @@ inline __device__ int is_br_boundary(int i) {
 
 inline __device__ int avgskip_allowed(int t, int *coords, int d) {
     int aa, dk;
-    for (aa = D - 1; aa >= 0; aa--) {
+    for (aa = 0; aa < D; aa++) {
         dk = d / skips[aa];
         d = d % skips[aa];
         if (aa == t) continue;
-        dk = coords[D - 1 - aa] - dk;
-        if (dk < 0 || dk == imagedims[D - 1 - aa]-1) {
+        dk = coords[aa] - dk;
+        if (dk < 0 || dk == imagedims[aa]-1) {
             return false;
         }
     }
@@ -90,10 +90,10 @@ __global__ void divergence(TYPE_T *x, TYPE_T *y)
         for (aa = 0; aa < navgskips; aa++) {
             if(avgskip_allowed(tt, coords, avgskips[tt*navgskips + aa])) {
                 base = i - avgskips[tt*navgskips + aa];
-                if (coords[D - 1 - tt] < imagedims[D - 1 - tt]-1) {
+                if (coords[tt] < imagedims[tt]-1) {
                     newval -= x[idx + base*dc_skip];
                 }
-                if (coords[D - 1 - tt] > 0) {
+                if (coords[tt] > 0) {
                     newval += x[idx + (base - skips[tt])*dc_skip];
                 }
             }

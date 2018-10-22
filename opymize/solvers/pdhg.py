@@ -166,18 +166,18 @@ class PDHG(object):
             eps_absp, eps_relp, eps_absd, eps_reld = self.info['epspd']
             self.info['epsp'] = np.sqrt(xk.size)*eps_absp + eps_relp*gnorm_pk
             self.info['epsd'] = np.sqrt(yk.size)*eps_absd + eps_reld*gnorm_dk
-            scale = self.info['epsd']/self.info['epsp']
+            scale = self.info['epsp']/self.info['epsd']
 
             if self.info['resp'] > scale*self.info['resd']*c['Delta']:
-                i['tauk'] *= 1.0/(1.0 - i['alphak'])
-                i['sigmak'] *= (1.0 - i['alphak'])
+                i['tauk']   /= 1.0 - i['alphak']
+                i['sigmak'] *= 1.0 - i['alphak']
                 i['alphak'] *= c['eta']
                 self.gprox = self.g.prox(i['tauk'])
                 self.fconjprox = self.f.conj.prox(i['sigmak'])
 
             if self.info['resp'] < scale*self.info['resd']/c['Delta']:
-                i['tauk'] *= (1.0 - i['alphak'])
-                i['sigmak'] *= 1.0/(1.0 - i['alphak'])
+                i['tauk']   *= 1.0 - i['alphak']
+                i['sigmak'] /= 1.0 - i['alphak']
                 i['alphak'] *= c['eta']
                 self.gprox = self.g.prox(i['tauk'])
                 self.fconjprox = self.f.conj.prox(i['sigmak'])
@@ -209,8 +209,8 @@ class PDHG(object):
                 bnd = truncate(1.0/op_norm**2, 3) # < 1/|K|^2
             if steps == "adaptive":
                 c['adaptive'] = True
-                c['eta'] = 0.95 # 0 < eta < 1
-                c['Delta'] = 1.5 # > 1
+                c['eta']    = 0.95 # 0 < eta < 1
+                c['Delta']  = 1.50 # 1 < Delta
                 i['alphak'] = 0.5
                 i['sigmak'] = i['tauk'] = np.sqrt(bnd)
                 self.gprox = self.g.prox(i['tauk'])

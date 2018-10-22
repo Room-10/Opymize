@@ -123,7 +123,8 @@ def prepare_vars(constvars, blockvars):
                 preamble += "__device__ double %s[%d];\n" % (name, val.size)
                 new_constvars[name] = val
             else:
-                raise Exception("Numpy dtype not supported: %s" % val.dtype)
+                raise Exception("Numpy dtype of '%s' not supported: %s" \
+                                        % (name, val.dtype))
         else:
             raise Exception("Type of '%s' not supported: %s" % (name, type(val)))
 

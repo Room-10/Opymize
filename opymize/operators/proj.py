@@ -306,6 +306,9 @@ class EpigraphProj(Operator):
             b : ndarray of floats, shape (nfuns, npoints)
         """
         Operator.__init__(self)
+        assert I.shape == b.shape
+        assert I.shape[1] == v.shape[0]
+        assert v.shape[1] == 2
 
         nfuns, npoints = I.shape
         nregions, nsubpoints = J.shape
@@ -343,7 +346,7 @@ class EpigraphProj(Operator):
         assert not add
         assert not jacobian
         if y is not None:
-            y[:] = x.copy()
+            y[:] = x
             x = y
         self._kernel(x)
 
@@ -361,9 +364,10 @@ class EpigraphProj(Operator):
                 A[:,0:-1] = self.v[self.J[j]][mask]
                 A[:,-1] = -1.0
 
-                # minimize  0.5*||y||**2 - <xji,y>  s.t.  A y <= b
-                P = cvxopt.spmatrix(1.0, range(b.size), range(b.size))
+                # minimize  0.5*||y||**2 + <-xji,y>  s.t.  A y <= b
+                P = cvxopt.spmatrix(1.0, range(xji.size), range(xji.size))
                 q = -cvxopt.matrix(xji)
                 G = cvxopt.matrix(A)
                 h = cvxopt.matrix(b)
-                y[j,i,:] = np.array(cvxopt.solvers.qp(P, q, G, h)['x']).ravel()
+                prog = cvxopt.solvers.qp(P, q, G, h, initvals={ 'x': -q })
+                y[j,i,:] = np.array(prog['x']).ravel()

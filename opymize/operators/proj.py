@@ -312,14 +312,10 @@ class EpigraphProj(Operator):
 
         nfuns, npoints = I.shape
         nregions, nsubpoints = J.shape
+        self.I, self.J, self.v, self.b = I, J, v, b
 
         self.x = Variable((nregions, nfuns, 3))
         self.y = self.x
-
-        self.I = I
-        self.J = J
-        self.v = v
-        self.b = b
 
     def prepare_gpu(self, type_t="double"):
         from pycuda import gpuarray
@@ -355,8 +351,8 @@ class EpigraphProj(Operator):
         assert not jacobian
         x = self.x.vars(x)[0]
         y = x if y is None else self.y.vars(y)[0]
-        for i in range(self.I.shape[0]):
-            for j in range(self.J.shape[0]):
+        for j in range(self.J.shape[0]):
+            for i in range(self.I.shape[0]):
                 xji = x[j,i]
                 mask = self.I[i,self.J[j]]
                 b = self.b[i,self.J[j]][mask]

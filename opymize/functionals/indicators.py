@@ -5,6 +5,10 @@ from opymize.operators import ConstOp, ConstrainOp, PosProj, NegProj, EpigraphPr
 import numpy as np
 from numpy.linalg import norm
 
+import cvxopt
+import cvxopt.solvers
+cvxopt.solvers.options['show_progress'] = False
+
 class IndicatorFct(Functional):
     """ F(x) = c2 if x==c1 else infty (use broadcasting in c1 if necessary) """
     def __init__(self, N, c1=0, c2=0, conj=None):
@@ -100,7 +104,10 @@ class NegativityFct(Functional):
 class EpigraphFct(Functional):
     """ F(x) = 0 if x[j,i] \in epi(f[i]_j*) for every j,i else infty
 
-    Cannot be called!
+    More precisely:
+
+        F(x) = 0 if <v[k],x[j,i,:-1]> - b[i,k] <= x[j,i,-1]
+                    for any i,j,k with I[i,J[j]][k] == True
     """
     def __init__(self, I, J, v, b, conj=None):
         """
@@ -114,6 +121,7 @@ class EpigraphFct(Functional):
 
         nfuns, npoints = I.shape
         nregions, nsubpoints = J.shape
+        self.I, self.J, self.v, self.b = I, J, v, b
 
         self.x = Variable((nregions, nfuns, 3))
 
@@ -124,14 +132,38 @@ class EpigraphFct(Functional):
 
         self._prox = EpigraphProj(I, J, v, b)
 
+    def __call__(self, x, grad=False):
+        val = 0
+        x = self.x.vars(x)[0]
+
+        infeas = 0
+        for j in range(self.J.shape[0]):
+            for i in range(self.I.shape[0]):
+                xji = x[j,i]
+                mask = self.I[i,self.J[j]]
+                b = self.b[i,self.J[j]][mask]
+                A = np.zeros((b.size,3))
+                A[:,0:-1] = self.v[self.J[j]][mask]
+                A[:,-1] = -1.0
+                infeas = max(infeas, np.amax(A.dot(xji) - b))
+
+        result = (val, infeas)
+        if grad:
+            result = result, self.x.new()
+        return result
+
     def prox(self, tau):
         # independent of tau
         return self._prox
 
 class EpigraphSupportFct(Functional):
-    """ F(x) = sum_ji max <y,x[j,i]> s.t. y \in epi(f[i]_j*)
+    """ F(x) = sum_ji max <y,x[j,i]>  s.t. y \in epi(f[i]_j*)
 
-    Cannot be called! prox is not implemented!
+    More precisely:
+
+        F(x) = sum_ji max <y,x[j,i]>
+                      s.t. <v[k],y[:-1]> - b[i,k] <= y[-1]
+                           for any k with I[i,J[j]][k] == True
     """
     def __init__(self, I, J, v, b, conj=None):
         """
@@ -145,6 +177,7 @@ class EpigraphSupportFct(Functional):
 
         nfuns, npoints = I.shape
         nregions, nsubpoints = J.shape
+        self.I, self.J, self.v, self.b = I, J, v, b
 
         self.x = Variable((nregions, nfuns, 3))
 
@@ -152,3 +185,27 @@ class EpigraphSupportFct(Functional):
             self.conj = EpigraphFct(I, J, v, b, conj=self)
         else:
             self.conj = conj
+
+    def __call__(self, x, grad=False):
+        assert not grad
+        infeas = 0
+        x = self.x.vars(x)[0]
+
+        val = 0
+        for j in range(self.J.shape[0]):
+            for i in range(self.I.shape[0]):
+                xji = x[j,i]
+                mask = self.I[i,self.J[j]]
+                b = self.b[i,self.J[j]][mask]
+                A = np.zeros((b.size,3))
+                A[:,0:-1] = self.v[self.J[j]][mask]
+                A[:,-1] = -1.0
+
+                # minimize <-xji,y>  s.t. A y <= b
+                c = -cvxopt.matrix(xji)
+                G = cvxopt.matrix(A)
+                h = cvxopt.matrix(b)
+                prog = cvxopt.solvers.lp(c, G, h)
+                val += np.array(prog['x']).ravel().dot(xji)
+
+        return val, infeas

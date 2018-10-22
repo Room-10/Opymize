@@ -259,9 +259,12 @@ class PDHG(object):
             else:
                 assert len(term_pd_res) == 4
             self.info['epspd'] = term_pd_res
-        elif type(term_pd_gap) is not tuple:
-            # tolerances for relative pd-gap and infeasibilities
-            term_pd_gap = (term_pd_gap, term_pd_gap)
+        else:
+            if type(term_pd_gap) is not tuple:
+                # tolerances for relative pd-gap and infeasibilities
+                term_pd_gap = (term_pd_gap, term_pd_gap)
+            if steps == "adaptive":
+                self.info['epspd'] = (term_pd_gap[0],)*4
 
         c['theta'] = 1.0 # overrelaxation
         self.prepare_stepsizes(step_bound, step_factor, steps)

@@ -83,16 +83,16 @@ def staggered_diff(x, y, b, avgskips, imagedims, adjoint=False, precond=False):
                         if precond:
                             if adjoint:
                                 x[base + skips[t],k] += np.abs(bk)
-                                x[base,k] += np.abs(bk)
+                                x[base,k]            += np.abs(bk)
                             else:
                                 y[i,t,k] += 2*np.abs(bk)
                         else:
                             if adjoint:
-                                x[base + skips[t],k] += bk * y[i,t,k]
-                                x[base,k] -= bk * y[i,t,k]
+                                x[base + skips[t],k] += bk*y[i,t,k]
+                                x[base,k]            -= bk*y[i,t,k]
                             else:
-                                y[i,t,k] += bk * x[base + skips[t],k]
-                                y[i,t,k] -= bk * x[base,k]
+                                y[i,t,k] += bk*x[base + skips[t],k]
+                                y[i,t,k] -= bk*x[base,k]
 
                 # advance coordinates
                 for dd in range(D-1,-1,-1):
@@ -148,6 +148,9 @@ class GradientOp(LinOp):
     derivative is the mean value of four finite differences etc.
 
     The "boundary" of y is left untouched.
+
+    Note that the kernel of this operator is not only spanned by constant data,
+    but by checkerboard patterns.
     """
     def __init__(self, imagedims, C, weights=None, adjoint=None):
         LinOp.__init__(self)

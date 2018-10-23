@@ -289,7 +289,7 @@ class PDHG(object):
 
                     if pd_res_mode:
                         logging.info("#{:6d}: res_p = {: 9.6g} ({: 9.6g}), " \
-                            "res_d = {: 9.6g} ({: 9.6g}), ".format(
+                            "res_d = {: 9.6g} ({: 9.6g})".format(
                             _iter, self.info['resp'], self.info['epsp'],
                             self.info['resd'], self.info['epsd']
                         ))
@@ -301,7 +301,7 @@ class PDHG(object):
                         logging.info("#{:6d}: objp = {: 9.6g} ({: 9.6g}), " \
                             "objd = {: 9.6g} ({: 9.6g}), " \
                             "gap = {: 9.6g}, " \
-                            "relgap = {: 9.6g} ".format(
+                            "relgap = {: 9.6g}".format(
                             _iter, self.info['objp'], self.info['infeasp'],
                             self.info['objd'], self.info['infeasd'],
                             self.info['gap'], self.info['relgap']

@@ -4,10 +4,7 @@ from opymize.operators import ConstOp, ConstrainOp, PosProj, NegProj, EpigraphPr
 
 import numpy as np
 from numpy.linalg import norm
-
-import cvxopt
-import cvxopt.solvers
-cvxopt.solvers.options['show_progress'] = False
+import scipy
 
 class IndicatorFct(Functional):
     """ F(x) = c2 if x==c1 else infty (use broadcasting in c1 if necessary) """
@@ -202,10 +199,6 @@ class EpigraphSupportFct(Functional):
                 A[:,-1] = -1.0
 
                 # minimize <-xji,y>  s.t. A y <= b
-                c = -cvxopt.matrix(xji)
-                G = cvxopt.matrix(A)
-                h = cvxopt.matrix(b)
-                prog = cvxopt.solvers.lp(c, G, h)
-                val += np.array(prog['x']).ravel().dot(xji)
+                val += -scipy.optimize.linprog(-xji, A_ub=A, b_ub=b).fun
 
         return val, infeas

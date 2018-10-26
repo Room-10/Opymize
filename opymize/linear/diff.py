@@ -15,68 +15,82 @@ except:
 
 @numba.njit
 def imagedim_skips(imagedims):
-    D = len(imagedims)
-    skips = np.zeros(D, dtype=np.int64)
+    ndims = len(imagedims)
+    skips = np.zeros(ndims, dtype=np.int64)
     skips[-1] = 1
-    for t in range(D-2,-1,-1):
+    for t in range(ndims-2,-1,-1):
         skips[t] = skips[t+1]*imagedims[t+1]
     return skips
 
+@numba.njit
 def staggered_diff_avgskips(imagedims):
-    D = len(imagedims)
+    ndims = len(imagedims)
     skips = imagedim_skips(imagedims)
-    navgskips =  1 << (D - 1)
-    avgskips = np.zeros([D, navgskips], dtype=np.int64, order='C')
-    for t in range(D):
-        for m, p in enumerate(itertools.product([0, 1], repeat=(D - 1))):
-            avgskips[t,m] = np.inner(p[:t] + (0,) + p[t:], skips)
+    navgskips =  1 << (ndims - 1)
+    avgskips = np.zeros((ndims, navgskips), dtype=np.int64)
+    coords = np.zeros(ndims, dtype=np.int64)
+    for t in range(ndims):
+        coords.fill(0)
+        for m in range(navgskips):
+            for c,s in zip(coords, skips):
+                avgskips[t,m] += c*s
+            for tt in range(ndims):
+                if tt == t:
+                    continue
+                coords[tt] += 1
+                if coords[tt] >= 2:
+                    coords[tt] = 0
+                else:
+                    break
     return avgskips
 
 @numba.njit
-def gradient(x, y, b, avgskips, imagedims, precond=False):
-    staggered_diff(x, y, b, avgskips, imagedims, adjoint=False, precond=precond)
+def gradient(x, y, imagedims, imageh, weights, precond=False):
+    staggered_diff(x, y, imagedims, imageh, weights, False, precond)
 
 @numba.njit
-def divergence(x, y, b, avgskips, imagedims, precond=False):
-    staggered_diff(y, x, b, avgskips, imagedims, adjoint=True, precond=precond)
+def divergence(x, y, imagedims, imageh, weights, precond=False):
+    staggered_diff(y, x, imagedims, imageh, weights, True, precond)
 
 @numba.njit
-def staggered_diff(x, y, b, avgskips, imagedims, adjoint=False, precond=False):
-    """ Computes `y[i,t,k] += b[k] * D[t,i,:]x[:,k]`.
-
-    N = prod(imagedims)
-    D = len(imagedims)
-    C = x.shape[1] (number of channels)
+def staggered_diff(x, y, imagedims, imageh, weights, adjoint, precond):
+    """ Computes `y[i,t,k] += weights[k]*D[t,i,:]x[:,k]`.
 
     Args:
-        x : function to be derived, shape (N,C)
-        y : gradient (when `adjoint == False`), shape (N,D,C)
-        b : weights for the features/channels of x
-        avgskips : output of staggered_diff_avgskips(imagedims)
-        imagedims : tuple, shape of the image domain
-        adjoint : optionally apply the adjoint operator (reading from y
-                  and writing to x), i.e. `x[i,k] -= b[k] * div[i,:,:]y[:,:,k]`.
-        precond : optionally compute rowwise/colwise L1 norm of `diag(b)D`.
+        x : ndarray of floats, shape (npoints, nchannels)
+            function to be derived
+        y : ndarray of floats, shape (npoints, ndims, nchannels)
+            gradient (when `adjoint == False`)
+        weights : ndarray of floats, shape (nchannels,)
+            weights for the features/channels of x
+        imagedims : tuple of ints, length ndims
+            resolution of the image grid
+        imageh : ndarray of floats, shape (ndims,)
+            step sizes of the image grid
+        adjoint : bool
+            optionally apply the adjoint operator (reading from y and writing
+            to x), i.e. `x[i,k] -= weights[k]*div[i,:,:]y[:,:,k]`.
+        precond : bool
+            optionally compute rowwise/colwise L1 norm of `diag(weights)D`.
     """
-    N, D, C = y.shape
-    navgskips =  1 << (D - 1)
+    npoints, ndims, nchannels = y.shape
+    navgskips =  1 << (ndims - 1)
+    avgskips = staggered_diff_avgskips(imagedims)
     skips = imagedim_skips(imagedims)
-    coords = np.zeros(D, dtype=np.int64)
+    coords = np.zeros(ndims, dtype=np.int64)
 
-    for k in range(C):
-        for t in range(D):
-            coords.fill(0.0)
-            for i in range(N):
-                # ignore boundary points
+    for k in range(nchannels):
+        for t in range(ndims):
+            coords.fill(0)
+            for i in range(npoints):
                 in_range = True
-                for dc in range(D-1,-1,-1):
+                for dc in range(ndims-1,-1,-1):
                     if coords[dc] >= imagedims[dc] - 1:
                         in_range = False
                         break
 
                 if in_range:
-                    # regular case
-                    bk = b[k]/navgskips
+                    bk = weights[k]/(navgskips*imageh[t])
 
                     for avgskip in avgskips[t]:
                         base = i + avgskip
@@ -94,32 +108,32 @@ def staggered_diff(x, y, b, avgskips, imagedims, adjoint=False, precond=False):
                                 y[i,t,k] += bk*x[base + skips[t],k]
                                 y[i,t,k] -= bk*x[base,k]
 
-                # advance coordinates
-                for dd in range(D-1,-1,-1):
+                for dd in range(ndims-1,-1,-1):
                     coords[dd] += 1
                     if coords[dd] >= imagedims[dd]:
                         coords[dd] = 0
                     else:
                         break
 
-def diff_prepare_gpu(imagedims, C, weights, type_t="double"):
-    N = np.prod(imagedims)
-    D = len(imagedims)
+def diff_prepare_gpu(imagedims, imageh, nchannels, weights, type_t="double"):
+    npoints = np.prod(imagedims)
+    ndims = len(imagedims)
     skips = imagedim_skips(imagedims)
     constvars = {
         'GRAD_DIV': 1,
-        'N': N, 'D': D, 'C': C, 'dc_skip': D*C,
+        'N': npoints, 'D': ndims, 'C': nchannels, 'dc_skip': ndims*nchannels,
         'skips': np.array(skips, dtype=np.int64, order='C'),
         'imagedims': np.array(imagedims, dtype=np.int64, order='C'),
         'avgskips': staggered_diff_avgskips(imagedims),
-        'navgskips': 1 << (D - 1),
+        'navgskips': 1 << (ndims - 1),
         'weights': weights,
+        'imageh': imageh,
         'TYPE_T': type_t
     }
     files = [resource_stream('opymize.linear', 'diff.cu')]
     templates = [
-        ("gradient", "PP", (N, C, D), (24, 16, 2)),
-        ("divergence", "PP", (N, C, 1), (32, 24, 1)),
+        ("gradient", "PP", (npoints, nchannels, ndims), (24, 16, 2)),
+        ("divergence", "PP", (npoints, nchannels, 1), (32, 24, 1)),
     ]
     return prepare_kernels(files, templates, constvars)
 
@@ -152,28 +166,30 @@ class GradientOp(LinOp):
     Note that the kernel of this operator is not only spanned by constant data,
     but by checkerboard patterns.
     """
-    def __init__(self, imagedims, C, weights=None, adjoint=None):
+    def __init__(self, imagedims, nchannels,
+                       imageh=None, weights=None, adjoint=None):
         LinOp.__init__(self)
-        D = len(imagedims)
-        N = np.prod(imagedims)
+        ndims = len(imagedims)
+        npoints = np.prod(imagedims)
         self.imagedims = imagedims
-        self.C = C
-        self.x = Variable((N, C))
-        self.y = Variable((N, D, C))
-        self.avgskips = staggered_diff_avgskips(imagedims)
-        self.weights = np.ones(C) if weights is None else weights
+        self.nchannels = nchannels
+        self.x = Variable((npoints, nchannels))
+        self.y = Variable((npoints, ndims, nchannels))
+        self.imageh = np.ones(ndims) if imageh is None else imageh
+        self.weights = np.ones(nchannels) if weights is None else weights
         self._kernels = None
 
         if adjoint is None:
-            self.adjoint = DivergenceOp(imagedims, C,
-                weights=self.weights, adjoint=self)
+            self.adjoint = DivergenceOp(imagedims, nchannels,
+                imageh=self.imageh, weights=self.weights, adjoint=self)
         else:
             self.adjoint = adjoint
 
     def prepare_gpu(self, kernels=None, type_t="double"):
         if self._kernels is not None: return
         if kernels is None:
-            kernels = diff_prepare_gpu(self.imagedims, self.C, self.weights,
+            kernels = diff_prepare_gpu(self.imagedims, self.imageh,
+                                       self.nchannels, self.weights,
                                        type_t=type_t)
         self._kernels = kernels
         self.adjoint.prepare_gpu(kernels, type_t=type_t)
@@ -188,42 +204,44 @@ class GradientOp(LinOp):
         x = self.x.vars(x)[0]
         y = self.y.vars(y)[0]
         if not add: y.fill(0.0)
-        gradient(x, y, self.weights, self.avgskips, self.imagedims)
+        gradient(x, y, self.imagedims, self.imageh, self.weights)
 
     def rowwise_lp(self, y, p=1, add=False):
         assert(p == 1)
         y = self.y.vars(y)[0]
         x = np.empty(self.x[0]['shape'])
         if not add: y.fill(0.0)
-        gradient(x, y, self.weights, self.avgskips, self.imagedims, precond=True)
+        gradient(x, y, self.imagedims, self.imageh, self.weights, precond=True)
 
 class DivergenceOp(LinOp):
     """ Negative divergence with Dirichlet boundary conditions
 
     Adjoint of GradientOp: x^k -= b^k * div(y^k)
     """
-    def __init__(self, imagedims, C, weights=None, adjoint=None):
+    def __init__(self, imagedims, nchannels,
+                       imageh=None, weights=None, adjoint=None):
         LinOp.__init__(self)
-        D = len(imagedims)
-        N = np.prod(imagedims)
+        ndims = len(imagedims)
+        npoints = np.prod(imagedims)
         self.imagedims = imagedims
-        self.C = C
-        self.x = Variable((N, D, C))
-        self.y = Variable((N, C))
-        self.avgskips = staggered_diff_avgskips(imagedims)
-        self.weights = np.ones(C) if weights is None else weights
+        self.nchannels = nchannels
+        self.x = Variable((npoints, ndims, nchannels))
+        self.y = Variable((npoints, nchannels))
+        self.imageh = np.ones(ndims) if imageh is None else imageh
+        self.weights = np.ones(nchannels) if weights is None else weights
         self._kernels = None
 
         if adjoint is None:
-            self.adjoint = GradientOp(imagedims, C,
-                weights=self.weights, adjoint=self)
+            self.adjoint = GradientOp(imagedims, nchannels,
+                imageh=self.imageh, weights=self.weights, adjoint=self)
         else:
             self.adjoint = adjoint
 
     def prepare_gpu(self, kernels=None, type_t="double"):
         if self._kernels is not None: return
         if kernels is None:
-            kernels = diff_prepare_gpu(self.imagedims, self.C, self.weights,
+            kernels = diff_prepare_gpu(self.imagedims, self.imageh,
+                                       self.nchannels, self.weights,
                                        type_t=type_t)
         self._kernels = kernels
         self.adjoint.prepare_gpu(kernels, type_t=type_t)
@@ -238,50 +256,54 @@ class DivergenceOp(LinOp):
         x = self.x.vars(x)[0]
         y = self.y.vars(y)[0]
         if not add: y.fill(0.0)
-        divergence(x, y, self.weights, self.avgskips, self.imagedims)
+        divergence(x, y, self.imagedims, self.imageh, self.weights)
 
     def rowwise_lp(self, y, p=1, add=False):
         assert(p == 1)
         y = self.y.vars(y)[0]
         x = np.empty(self.x[0]['shape'])
         if not add: y.fill(0.0)
-        divergence(x, y, self.weights, self.avgskips, self.imagedims, precond=True)
+        divergence(x, y, self.imagedims, self.imageh, self.weights, precond=True)
 
 @numba.njit
-def laplacian(x, y, imagedims, precond=False):
+def laplacian(x, y, imagedims, imageh, precond=False):
     """ Computes `y[i,k] += Delta[i,:]x[:,k]`.
 
-    N = prod(imagedims)
-    C = x.shape[1] (number of channels)
-
     Args:
-        x : function to be derived, shape (N,C)
-        y : Laplacian, shape (N,C)
-        imagedims : tuple, shape of the image domain
-        precond : optionally compute rowwise/colwise L1 norm of `Delta`.
+        x : ndarray of floats, shape (npoints, nchannels)
+            function to be derived
+        y : ndarray of floats, shape (npoints, nchannels)
+            Laplacian of x
+        imagedims : tuple of ints, length ndims
+            resolution of the image grid
+        imageh : ndarray of floats, shape (ndims,)
+            step sizes of the image grid
+        precond : bool
+            optionally compute rowwise/colwise L1 norm of `Delta`.
     """
-    N, C = y.shape
-    D = len(imagedims)
+    npoints, nchannels = y.shape
+    ndims = len(imagedims)
     skips = imagedim_skips(imagedims)
-    coords = np.zeros(D, dtype=np.int64)
+    coords = np.zeros(ndims, dtype=np.int64)
 
-    for k in range(C):
-        coords.fill(0.0)
-        for i in range(N):
-            y[i,k] += 2*D if precond else -2*D*x[i,k]
-            for t in range(D):
+    for k in range(nchannels):
+        coords.fill(0)
+        for i in range(npoints):
+            for t in range(ndims):
+                invh2 = 1.0/imageh[t]**2
                 if coords[t] > 0:
-                    y[i,k] +=  1 if precond else x[i - skips[t],k]
-                else:
-                    y[i,k] += -1 if precond else x[i,k]
+                    if precond:
+                        y[i,k] += 2*invh2
+                    else:
+                        y[i,k] += invh2*(x[i - skips[t],k] - x[i,k])
 
                 if coords[t] < imagedims[t] - 1:
-                    y[i,k] +=  1 if precond else x[i + skips[t],k]
-                else:
-                    y[i,k] += -1 if precond else x[i,k]
+                    if precond:
+                        y[i,k] += 2*invh2
+                    else:
+                        y[i,k] += invh2*(x[i + skips[t],k] - x[i,k])
 
-            # advance coordinates
-            for dd in range(D-1,-1,-1):
+            for dd in range(ndims-1,-1,-1):
                 coords[dd] += 1
                 if coords[dd] >= imagedims[dd]:
                     coords[dd] = 0
@@ -290,30 +312,34 @@ def laplacian(x, y, imagedims, precond=False):
 
 class LaplacianOp(LinOp):
     """ Laplacian operator with Neumann boundary conditions (self-adjoint) """
-    def __init__(self, imagedims, C):
+    def __init__(self, imagedims, nchannels, imageh=None):
         LinOp.__init__(self)
-        N = np.prod(imagedims)
+        npoints = np.prod(imagedims)
+        ndims = len(imagedims)
         self.imagedims = imagedims
-        self.C = C
-        self.x = Variable((N, C))
-        self.y = Variable((N, C))
+        self.imageh = np.ones(ndims) if imageh is None else imageh
+        self.nchannels = nchannels
+        self.x = Variable((npoints, nchannels))
+        self.y = Variable((npoints, nchannels))
         self._kernel = None
         self.adjoint = self
 
     def prepare_gpu(self, type_t="double"):
         if self._kernel is not None: return
-        N = np.prod(self.imagedims)
+        npoints = np.prod(self.imagedims)
+        ndims = len(self.imagedims)
         skips = imagedim_skips(self.imagedims)
         constvars = {
             'LAPLACIAN': 1,
-            'N': N, 'D': len(self.imagedims), 'C': self.C,
+            'N': npoints, 'D': ndims, 'C': self.nchannels,
             'skips': np.array(skips, dtype=np.int64, order='C'),
             'imagedims': np.array(self.imagedims, dtype=np.int64, order='C'),
+            'imageh': self.imageh,
             'TYPE_T': type_t
         }
         files = [resource_stream('opymize.linear', 'diff.cu')]
         templates = [
-            ("laplacian", "PP", (N, self.C, 1), (32, 24, 1)),
+            ("laplacian", "PP", (npoints, self.nchannels, 1), (32, 24, 1)),
         ]
         self._kernel = prepare_kernels(files, templates, constvars)['laplacian']
 
@@ -327,11 +353,11 @@ class LaplacianOp(LinOp):
         x = self.x.vars(x)[0]
         y = self.y.vars(y)[0]
         if not add: y.fill(0.0)
-        laplacian(x, y, self.imagedims)
+        laplacian(x, y, self.imagedims, self.imageh)
 
     def rowwise_lp(self, y, p=1, add=False):
         assert(p == 1)
         y = self.y.vars(y)[0]
         x = np.empty(self.x[0]['shape'])
         if not add: y.fill(0.0)
-        laplacian(x, y, self.imagedims, precond=True)
+        laplacian(x, y, self.imagedims, self.imageh, precond=True)

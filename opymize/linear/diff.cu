@@ -52,7 +52,7 @@ __global__ void gradient(TYPE_T *x, TYPE_T *y)
     TYPE_T newval, fac;
 
     newval = 0.0;
-    fac = weights[k]/(TYPE_T)navgskips;
+    fac = weights[k]/(imageh[t]*(TYPE_T)navgskips);
 
     // skip points on "bottom or right" boundary
     if (!is_br_boundary(i)) {
@@ -91,10 +91,10 @@ __global__ void divergence(TYPE_T *x, TYPE_T *y)
             if(avgskip_allowed(tt, coords, avgskips[tt*navgskips + aa])) {
                 base = i - avgskips[tt*navgskips + aa];
                 if (coords[tt] < imagedims[tt]-1) {
-                    newval -= x[idx + base*dc_skip];
+                    newval -= x[idx + base*dc_skip]/imageh[tt];
                 }
                 if (coords[tt] > 0) {
-                    newval += x[idx + (base - skips[tt])*dc_skip];
+                    newval += x[idx + (base - skips[tt])*dc_skip]/imageh[tt];
                 }
             }
         }
@@ -119,22 +119,21 @@ __global__ void laplacian(TYPE_T *x, TYPE_T *y)
     // iteration variable and misc.
     int tt;
     int* coords = i2coords(i);
-    TYPE_T newval;
+    TYPE_T newval, xik, invh2;
 
-    newval = -2*D*x[i*C + k];
+    xik = x[i*C + k];
+    newval = 0;
 
     // skip points on "bottom right" boundary
     for (tt = 0; tt < D; tt++) {
+        invh2 = 1.0/(imageh[tt]*imageh[tt]);
+
         if (coords[tt] > 0) {
-            newval += x[(i - skips[tt])*C + k];
-        } else {
-            newval += x[i*C + k];
+            newval += invh2*(x[(i - skips[tt])*C + k] - xik);
         }
 
         if (coords[tt] < imagedims[tt]-1) {
-            newval += x[(i + skips[tt])*C + k];
-        } else {
-            newval += x[i*C + k];
+            newval += invh2*(x[(i + skips[tt])*C + k] - xik);
         }
     }
 

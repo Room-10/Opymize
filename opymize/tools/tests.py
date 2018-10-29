@@ -45,13 +45,14 @@ def checkOpDerivative(op, x):
         print('%02d: % 7.2e % 7.2e % 7.2e' % (m, h, err, err/h**2))
 
 def test_adjoint(op):
+    N = max(op.x.size, op.y.size)
     x = np.random.randn(op.x.size)
     y = np.random.randn(op.y.size)
     ATy = 0*x
     Ax = 0*y
     op(x, Ax)
     op.adjoint(y, ATy)
-    assert(np.abs(Ax.dot(y) - x.dot(ATy)) < 1e-10)
+    assert(np.abs(Ax.dot(y) - x.dot(ATy)) < N*1e-11)
     print("adjoint operator tested successfully")
 
 def test_rowwise_lp(op, p=1, maxiter=10):

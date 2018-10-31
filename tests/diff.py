@@ -25,7 +25,7 @@ def cell_centered_grid(domain, shape):
     grid += domain[None,:,0] + 0.5*h[None,:]
     return grid, h
 
-print("Testing gradient operator...")
+print("=> Testing gradient operator...")
 imagedims = (10,12)
 ndims = len(imagedims)
 nchannels = 3
@@ -51,26 +51,27 @@ for s in range(1,4):
     dif = y[:-1,:-1] - ytest[:-1,:-1]
     assert np.linalg.norm(vol*dif.ravel()) < 2*vol
 
-print("Testing Laplacian operator...")
-imagedims = (10,12)
-ndims = len(imagedims)
-nchannels = 3
-lplcn = LaplacianOp(imagedims, nchannels)
-for op in [lplcn,lplcn.adjoint]:
-    test_adjoint(op)
-    test_rowwise_lp(op)
-    test_gpu_op(op)
+print("=> Testing Laplacian operator...")
+for bdry in ["neumann","curvature"]:
+    imagedims = (10,12)
+    ndims = len(imagedims)
+    nchannels = 3
+    lplcn = LaplacianOp(imagedims, nchannels, boundary=bdry)
+    for op in [lplcn,lplcn.adjoint]:
+        test_adjoint(op)
+        test_rowwise_lp(op)
+        test_gpu_op(op)
 
-nchannels = 1
-for s in range(1,4):
-    imagedims = (10**s,10**s)
-    grid, imageh = cell_centered_grid(domain, imagedims)
-    vol = np.prod(imageh)
-    lplcn = LaplacianOp(imagedims, nchannels, imageh=imageh)
-    y = lplcn.y.new()
-    x = testfun(grid).ravel()
-    lplcn(x, y)
-    x, y = [v.reshape(imagedims) for v in [x,y]]
-    ytest = testfun_laplacian(grid).reshape(imagedims)
-    dif = y[1:-1,1:-1] - ytest[1:-1,1:-1]
-    assert np.linalg.norm(vol*dif.ravel()) < 2*vol
+    nchannels = 1
+    for s in range(1,4):
+        imagedims = (10**s,10**s)
+        grid, imageh = cell_centered_grid(domain, imagedims)
+        vol = np.prod(imageh)
+        lplcn = LaplacianOp(imagedims, nchannels, imageh=imageh, boundary=bdry)
+        y = lplcn.y.new()
+        x = testfun(grid).ravel()
+        lplcn(x, y)
+        x, y = [v.reshape(imagedims) for v in [x,y]]
+        ytest = testfun_laplacian(grid).reshape(imagedims)
+        dif = y[1:-1,1:-1] - ytest[1:-1,1:-1]
+        assert np.linalg.norm(vol*dif.ravel()) < 2*vol

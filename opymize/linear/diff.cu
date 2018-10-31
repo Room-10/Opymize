@@ -1,18 +1,17 @@
 
-inline __device__ int* i2coords(int i) {
-    int aa;
-    int coords[D];
-    for (aa = 0; aa < D; aa++) {
-        coords[aa] = i / skips[aa];
-        i = i % skips[aa];
+inline __device__ void i2coords(int i, int *coords) {
+    int tt;
+    for (tt = 0; tt < D; tt++) {
+        coords[tt] = i / skips[tt];
+        i = i % skips[tt];
     }
-    return coords;
 }
 
 #ifdef GRAD_DIV
 inline __device__ int is_br_boundary(int i) {
     int aa;
-    int* coords = i2coords(i);
+    int coords[D];
+    i2coords(i, coords);
     for (aa = 0; aa < D; aa++) {
         if (imagedims[aa]-1 == coords[aa]) {
             return true;
@@ -79,7 +78,8 @@ __global__ void divergence(TYPE_T *x, TYPE_T *y)
 
     // iteration variable and misc.
     int tt, aa, base, idx;
-    int* coords = i2coords(i);
+    int coords[D];
+    i2coords(i, coords);
     TYPE_T newval, fac;
 
     newval = 0.0;
@@ -107,7 +107,7 @@ __global__ void divergence(TYPE_T *x, TYPE_T *y)
 #ifdef LAPLACIAN
 __global__ void laplacian(TYPE_T *x, TYPE_T *y)
 {
-    // y += \Delta x (\Delta is the Laplacian with Neumann boundary)
+    // y += \Delta x (\Delta is the Laplacian with various boundary conditions)
 
     // global thread index
     int i = blockIdx.x*blockDim.x + threadIdx.x;
@@ -118,13 +118,64 @@ __global__ void laplacian(TYPE_T *x, TYPE_T *y)
 
     // iteration variable and misc.
     int tt;
-    int* coords = i2coords(i);
+    int coords[D];
+    i2coords(i, coords);
     TYPE_T newval, xik, invh2;
 
     xik = x[i*C + k];
     newval = 0;
 
-    // skip points on "bottom right" boundary
+#if boundary_conditions == 'C'
+#if ADJOINT
+    // skip corners
+    int boundary_dim = -1;
+    for (tt = 0; tt < D; tt++) {
+        if (coords[tt] == 0 || coords[tt] == imagedims[tt]-1) {
+            if (boundary_dim >= 0) {
+                return;
+            } else {
+                boundary_dim = tt;
+            }
+        }
+    }
+
+    if (boundary_dim >= 0) {
+        tt = boundary_dim;
+        invh2 = 1.0/(imageh[tt]*imageh[tt]);
+        if (coords[tt] == 0) {
+            newval += invh2*x[(i + skips[tt])*C + k];
+        } else if (coords[tt] == imagedims[tt]-1) {
+            newval += invh2*x[(i - skips[tt])*C + k];
+        }
+    } else {
+        for (tt = 0; tt < D; tt++) {
+            invh2 = 1.0/(imageh[tt]*imageh[tt]);
+            newval -= 2*invh2*xik;
+
+            if (coords[tt]-1 > 0) {
+                newval += invh2*x[(i - skips[tt])*C + k];
+            }
+
+            if (coords[tt]+1 < imagedims[tt]-1) {
+                newval += invh2*x[(i + skips[tt])*C + k];
+            }
+        }
+    }
+#else // !ADJOINT
+    // skip all boundary points entirely
+    for (tt = 0; tt < D; tt++) {
+        if (coords[tt] == 0 || coords[tt] == imagedims[tt]-1) {
+            return;
+        }
+    }
+
+    for (tt = 0; tt < D; tt++) {
+        invh2 = 1.0/(imageh[tt]*imageh[tt]);
+        newval += invh2*(x[(i - skips[tt])*C + k] - xik)
+               +  invh2*(x[(i + skips[tt])*C + k] - xik);
+    }
+#endif
+#else // boundary_conditions == 'N'
     for (tt = 0; tt < D; tt++) {
         invh2 = 1.0/(imageh[tt]*imageh[tt]);
 
@@ -136,6 +187,7 @@ __global__ void laplacian(TYPE_T *x, TYPE_T *y)
             newval += invh2*(x[(i + skips[tt])*C + k] - xik);
         }
     }
+#endif
 
     y[i*C + k] += newval;
 }

@@ -1,5 +1,7 @@
 
 import numpy as np
+import scipy.sparse as sp
+import cvxpy as cp
 
 from opymize.linear.diff import GradientOp, LaplacianOp
 from opymize.tools.tests import test_adjoint, test_rowwise_lp, test_gpu_op
@@ -75,3 +77,27 @@ for bdry in ["neumann","curvature"]:
         ytest = testfun_laplacian(grid).reshape(imagedims)
         dif = y[1:-1,1:-1] - ytest[1:-1,1:-1]
         assert np.linalg.norm(vol*dif.ravel()) < 2*vol
+
+def laplop(m, n):
+    ddn = sp.spdiags(np.ones(n)*np.array([[1, -2, 1]]).T, [-1, 0, 1], n, n)
+    ddm = sp.spdiags(np.ones(m)*np.array([[1, -2, 1]]).T, [-1, 0, 1], m, m)
+    return sp.kron(ddm, sp.eye(n,n)) + sp.kron(sp.eye(m,m), ddn)
+
+imagedims = np.array((30, 40))
+data = np.random.rand(*imagedims)
+
+op = LaplacianOp(imagedims, 1, boundary="curvature")
+Dy_curv = op.y.new().reshape(imagedims)
+op(data, Dy_curv)
+
+gimagedims = imagedims+2
+A = cp.Constant(laplop(*gimagedims[::-1]))
+y = cp.Variable(gimagedims)
+Dy = cp.reshape(A*cp.vec(y), gimagedims)
+cp.Problem(
+    cp.Minimize(cp.sum_squares(Dy[1:-1,1:-1])),
+    [y[1:-1,1:-1] == data]
+).solve(solver="MOSEK")
+Dy_ghost = Dy.value
+
+assert np.linalg.norm(Dy_curv - Dy_ghost[1:-1,1:-1], ord=np.inf) < 1e-12

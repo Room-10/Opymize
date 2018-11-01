@@ -420,6 +420,7 @@ class LaplacianOp(LinOp):
             ("laplacian", "PP", (npoints, self.nchannels, 1), (32, 24, 1)),
         ]
         self._kernel = prepare_kernels(files, templates, constvars)['laplacian']
+        self.adjoint.prepare_gpu(type_t=type_t)
 
     def _call_gpu(self, x, y=None, add=False):
         assert y is not None

@@ -154,13 +154,13 @@ class EpigraphFct(Functional):
         return self._prox
 
 class EpigraphSupportFct(Functional):
-    """ F(x) = sum_ji max <y,x[j,i]>  s.t. y \in epi(f[i]_j*)
+    """ F(x) = max sum_ji <y,x[j,i]>  s.t. y \in epi(f[i]_j*)
 
     More precisely:
 
-        F(x) = sum_ji max <y,x[j,i]>
-                      s.t. <v[k],y[:-1]> - b[i,k] <= y[-1]
-                           for any k with I[i,J[j]][k] == True
+        F(x) = max sum_ji <y,x[j,i]>
+               s.t. <v[k],y[:-1]> - b[i,k] <= y[-1]
+                    for any i,j,k with I[i,J[j]][k] == True
     """
     def __init__(self, I, J, v, b, conj=None):
         """
@@ -188,17 +188,20 @@ class EpigraphSupportFct(Functional):
         infeas = 0
         x = self.x.vars(x)[0]
 
-        val = 0
+        bs = []
+        As = []
         for j in range(self.J.shape[0]):
             for i in range(self.I.shape[0]):
-                xji = x[j,i]
                 mask = self.I[i,self.J[j]]
-                b = self.b[i,self.J[j]][mask]
-                A = np.zeros((b.size,3))
+                bs.append(self.b[i,self.J[j]][mask])
+                A = np.zeros((bs[-1].size,3))
                 A[:,0:-1] = self.v[self.J[j]][mask]
                 A[:,-1] = -1.0
+                As.append(A)
+        b = np.hstack(bs)
+        A = np.linalg.block_diag(*As)
 
-                # minimize <-xji,y>  s.t. A y <= b
-                val += -scipy.optimize.linprog(-xji, A_ub=A, b_ub=b).fun
+        # minimize <-x,y>  s.t. A y <= b
+        val = -scipy.optimize.linprog(-x.ravel(), A_ub=A, b_ub=b).fun
 
         return val, infeas

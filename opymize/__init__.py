@@ -1,5 +1,7 @@
 
 import numpy as np
+import scipy.sparse as sp
+import scipy.sparse.linalg
 
 class Variable(object):
     def __init__(self, *args):
@@ -91,7 +93,19 @@ class LinOp(Operator):
         raise Exception("This operator does not support GPU arrays")
 
     def _call_cpu(self, x, y=None, add=False):
-        raise Exception("This operator does not support numpy arrays")
+        if hasattr(self, 'spmat'):
+            mat = self.spmat
+        elif hasattr(self, 'mat'):
+            mat = self.mat
+        else:
+            raise Exception("This operator does not support numpy arrays")
+
+        assert y is not None
+        x, y = x.ravel(), y.ravel()
+        if not add:
+            y[:] = mat.dot(x)
+        else:
+            y += mat.dot(x)
 
     def __call__(self, x, y=None, add=False, jacobian=False):
         try:
@@ -118,7 +132,14 @@ class LinOp(Operator):
         Returns:
             Nothing, the result is written to y.
         """
-        raise Exception("This operator does not support rowwise l^p norms.")
+        if not add:
+            y.fill(0.0)
+        if hasattr(self, 'spmat'):
+            y += sp.linalg.norm(self.spmat, ord=p, axis=1)
+        elif hasattr(self, 'mat'):
+            y += np.linalg.norm(self.mat, ord=p, axis=1)
+        else:
+            raise Exception("This operator does not support rowwise l^p norms.")
 
 class Functional(object):
     """ Representation of a mathematical functional F """

@@ -97,7 +97,7 @@ Dy = cp.reshape(A*cp.vec(y), gimagedims)
 cp.Problem(
     cp.Minimize(cp.sum_squares(Dy[1:-1,1:-1])),
     [y[1:-1,1:-1] == data]
-).solve(solver="MOSEK")
+).solve()
 Dy_ghost = Dy.value
 
 assert np.linalg.norm(Dy_curv - Dy_ghost[1:-1,1:-1], ord=np.inf) < 1e-12

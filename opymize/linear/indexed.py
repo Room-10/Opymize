@@ -1,5 +1,6 @@
 
 from opymize import Variable, LinOp
+from opymize.linear import sparse as osp
 
 import numba
 import numpy as np
@@ -30,20 +31,6 @@ def indexedmult_prepare_gpu(B, P, x, type_t="double"):
     ]
     return prepare_kernels(files, templates, constvars)
 
-@numba.njit
-def adjoint_multiply_indexed(y, P, B, x, precond=False):
-    """ Does this: y[P] -= np.einsum('jml,jim->ijl', B, w)
-    Unfortunately, advanced indexing without creating a copy is impossible.
-    """
-    for j in range(x.shape[0]):
-        for i in range(x.shape[1]):
-            for l in range(B.shape[2]):
-                for m in range(x.shape[2]):
-                    if precond:
-                        y[i,P[j,l]] += np.abs(B[j,m,l])
-                    else:
-                        y[i,P[j,l]] -= B[j,m,l]*x[j,i,m]
-
 class IndexedMultAdj(LinOp):
     """ for k,l,i do (Ax)[i,P[j,l]] -= \sum_m B[j,m,l] * x[j,i,m] """
     def __init__(self, K, N, P, B, adjoint=None):
@@ -59,6 +46,7 @@ class IndexedMultAdj(LinOp):
         else:
             self.adjoint = adjoint
         self._kernel = None
+        self.spmat = self.adjoint.spmat.T
 
     def prepare_gpu(self, kernels=None, type_t="double"):
         if self._kernel is not None: return
@@ -71,19 +59,6 @@ class IndexedMultAdj(LinOp):
         assert y is not None
         if not add: y.fill(0.0)
         self._kernel(x, y)
-
-    def _call_cpu(self, x, y=None, add=False):
-        assert y is not None
-        if not add: y.fill(0.0)
-        x = self.x.vars(x)[0]
-        y = self.y.vars(y)[0]
-        adjoint_multiply_indexed(y, self.P, self.B, x)
-
-    def rowwise_lp(self, y, p=1, add=False):
-        assert p is 1
-        y = self.y.vars(y)[0]
-        x = self.x.vars(self.x.new())[0]
-        adjoint_multiply_indexed(y, self.P, self.B, x, precond=True)
 
 class IndexedMult(LinOp):
     """ (Ax)[j,i,m] -= \sum_l B[j,m,l] * x[i,P[j,l]] """
@@ -101,6 +76,12 @@ class IndexedMult(LinOp):
             self.adjoint = adjoint
         self._kernel = None
 
+        spP = osp.stackedop([osp.idxop(Pj, K) for Pj in P])
+        spP = osp.extendedop(spP, before=(N,))
+        spB = osp.extendedop(osp.diagop(B), before=(N,))
+        spB = osp.transposeopn((N, B.shape[0], B.shape[1]), (1,0,2)).dot(spB)
+        self.spmat = -spB.dot(spP)
+
     def prepare_gpu(self, kernels=None, type_t="double"):
         if self._kernel is not None: return
         if kernels is None:
@@ -112,16 +93,3 @@ class IndexedMult(LinOp):
         assert y is not None
         if not add: y.fill(0.0)
         self._kernel(x, y)
-
-    def _call_cpu(self, x, y=None, add=False):
-        assert y is not None
-        if not add: y.fill(0.0)
-        x = self.x.vars(x)[0]
-        y = self.y.vars(y)[0]
-        y -= np.einsum('jml,ijl->jim', self.B, x[:,self.P])
-
-    def rowwise_lp(self, y, p=1, add=False):
-        assert p is 1
-        assert add
-        y = self.y.vars(y)[0]
-        y += norm(self.B, ord=1, axis=2)[:,None,:]

@@ -1,6 +1,6 @@
 
 from opymize import Variable, LinOp
-from opymize.linear import sparse as osp
+from opymize.linear.sparse import idxop, einsumop
 
 import numba
 import numpy as np
@@ -76,11 +76,9 @@ class IndexedMult(LinOp):
             self.adjoint = adjoint
         self._kernel = None
 
-        spP = osp.stackedop([osp.idxop(Pj, K) for Pj in P])
-        spP = osp.extendedop(spP, before=(N,))
-        spB = osp.extendedop(osp.diagop(B), before=(N,))
-        spB = osp.transposeopn((N, B.shape[0], B.shape[1]), (1,0,2)).dot(spB)
-        self.spmat = -spB.dot(spP)
+        spP = [idxop(Pj, K) for Pj in P]
+        spP = einsumop("jlk,ik->jil", spP, dims={ 'i': N })
+        self.spmat = -einsumop("jml,jil->jim", B, dims={ 'i': N }).dot(spP)
 
     def prepare_gpu(self, kernels=None, type_t="double"):
         if self._kernel is not None: return

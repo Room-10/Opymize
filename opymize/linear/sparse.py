@@ -1,4 +1,6 @@
 
+import warnings
+
 import numpy as np
 import scipy.sparse as sp
 
@@ -42,8 +44,7 @@ def lplcnop2(dims, components=1, steps=None, boundaries="neumann"):
     n1, n2 = dims
     Delta = sp.kron( dd(n1),eye(n2))/steps[0]**2 \
           + sp.kron(eye(n1), dd(n2))/steps[1]**2
-    # einsum: 'ij,jk->ik'
-    return sp.kron(Delta, sp.eye(components))
+    return einsumop("ij,jk->ik", Delta, dims={ 'k': components })
 
 def diffopn(dims, components=1, steps=None, weights=None,
                   schemes="forward", boundaries="neumann"):
@@ -78,11 +79,9 @@ def diffopn(dims, components=1, steps=None, weights=None,
     for t,size in enumerate(dims):
         partial_t = diffop(size, scheme=schemes[t],
                                  boundaries=boundaries[t])/steps[t]
-        # einsum 'ij,kjl->kil'
         partial_t = extendedop(partial_t, before=dims[:t], after=dims[(t+1):])
         partials.append(partial_t)
-    # einsum: 'tij,j->it'
-    return sp.kron(stackedop(partials, order='F'), sp.diags(weights))
+    return sp.kron(einsumop("tij,j->it", partials), sp.diags(weights))
 
 def diffop(size, scheme="forward", boundaries="neumann"):
     """ Finite difference matrix for 1D data
@@ -200,6 +199,8 @@ def diffop(size, scheme="forward", boundaries="neumann"):
             diags[0][-1] = 2
         else:
             raise Exception("Unsupported boundary condition for this scheme")
+
+        diags = [0.5*d for d in diags]
     else:
         raise Exception("Unsupported scheme")
     return sp.diags(diags, indices, shape=(size,size))
@@ -223,12 +224,10 @@ def avgopn(dims):
             diags = np.ones((2, dims[ti]))
             diags[0,-1] = 0
             A = sp.diags(diags, [0, 1], shape=(dims[ti],dims[ti]))
-            # einsum: kl,ilj->ikj
             A = extendedop(A, before=dims[:ti], after=dims[ti+1:])
             avg_t = 0.5*(avg_t + A)
         avgs.append(avg_t)
-    # einsum: tij,jt->it
-    return diagop(avgs, order=('F','F'))
+    return einsumop("tij,jt->it", avgs)
 
 def transposeopn(shape, axes):
     """ Sparse matrix representation of y = x.transpose(axes) """
@@ -254,61 +253,26 @@ def transposeop(m, n):
 
 def idxop(P, m):
     # y[i] = x[P[i]]  where  P[i] \in {0,...,m}
-    n = P.size
-    return sp.coo_matrix((np.ones(n), (range(n),P)), shape=(n,m))
+    return sp.coo_matrix((np.ones(P.size),(range(P.size),P)), shape=(P.size,m))
 
-def diagop(As, order='C'):
-    # y[j,l] = sum_k As[j][l,k]*x[j,k]
-    if order in ['C','F']:
-        order = (order, order)
-    J, (L, K) = len(As), As[0].shape
-    T_op_in = transposeop(K, J) if order[0] == 'F' else sp.eye(K*J)
-    T_op_out = transposeop(J, L) if order[1] == 'F' else sp.eye(J*L)
-    return T_op_out.dot(sp.block_diag(As)).dot(T_op_in)
-
-def stackedop(As, order='C'):
-    # y[j,l] = sum_k As[j][l,k]*x[k]
-    J, (L, K) = len(As), As[0].shape
-    T_op_out = transposeop(J, L) if order == 'F' else sp.eye(J*L)
-    return T_op_out.dot(sp.vstack(As))
-
-def extendedop(A, before=None, after=None):
+def extendedop(A, before=(), after=()):
     """ y[...,i,...] = sum_j A[i,j]*x[...,j,...] """
-    if before is not None and len(before) > 0:
-        # block matrix with A repeated `before[-1]` times along the diagonal
-        A = sp.kron(sp.eye(before[-1]), A)
-        A = extendedop(A, before=before[:-1], after=after)
-    elif after is not None and len(after) > 0:
-        # each entry of A is stretched to a diagonal block of size `after[0]`
-        A = sp.kron(A, sp.eye(after[0]))
-        A = extendedop(A, after=after[1:])
-    return A
+    dims = { 'k': int(np.prod(before)), 'l': int(np.prod(after)) }
+    return einsumop("ij,kjl->kil", A, dims=dims)
 
 def array_shape(data):
-    try:
-        return data.shape
-    except:
-        try:
-            return (len(data),) + data_shape(data[0])
-        except:
-            return ()
+    if hasattr(data, 'shape'):
+        return sp.issparse(data), data.shape
+    elif type(data) in [list,tuple] and len(data) > 0:
+        issparse, subshape = array_shape(data[0])
+        return issparse, (len(data),) + subshape
+    elif np.isscalar(data):
+        return False, ()
+    else:
+        raise ValueError("Unknown shape: '%s'" % type(data))
 
-def derive_shape(dout, din, sin):
-    sout = [0,]*len(dout)
-    for j,dn in enumerate(dout):
-        iin = np.array([d.find(dn) for d in din], dtype=np.int64)
-        i = np.where(iin >= 0)[0][0]
-        sout[j] = sin[i][iin[i]]
-    return tuple(sout)
-
-def einsumop(subscripts, data, shape_in, shape_out=None, order='C'):
+def einsumop(subscripts, data, shape_in=None, shape_out=None, order='C', dims={}):
     """ Generate sparse operator from numpy.einsum subscripts
-
-    For `subscripts = ",ij->ji"` and `data = 1` the result is transposeop.
-
-    For indices on the rhs that don't appear on the lhs (as in
-    `subscripts = ",->i"`), a tiled matrix is generated.
-    In this case, `shape_out` is mandatory.
 
     Args:
         subscripts : string
@@ -317,87 +281,148 @@ def einsumop(subscripts, data, shape_in, shape_out=None, order='C'):
             Can be a list of sparse matrices or a scalar (for 0-dimensional)
             or an ndarray or a list of ndarrays etc.
         shape_in : tuple of ints
+            If None, the input shape is determined from `subscripts` and `data`.
         shape_out : tuple of ints
             If None, the output shape is determined from `subscripts`, `data`
             and `shape_in`.
         order : {'C','F'} or pair of these
-            Assume that input (and output) have specified ordering.
+            Assume that input/output have specified ordering.
+        dims : dict
+            Specify dimensions for letters in `subscripts` that can't be
+            determined from given `data`, `shape_in` and `shape_out`.
 
     Examples:
         >>> subscripts = "ijkl,kij->lj"
-        >>> A = einsumop(subscripts, data, shape_in, shape_out)
-        >>> # suppose `x` is array of shape `shape_in`
-        >>> assert np.all(A.dot(x) == np.einsum(subscripts, data, x).ravel())
+        >>> # suppose `x`, `data` are arrays of correct shape
+        >>> A = einsumop(subscripts, data)
+        >>> A.dot(x.ravel()) == np.einsum(subscripts, data, x).ravel()
     """
-    # data is sparse matrix: use direct (instead of recursive) approach
-    if sp.issparse(data):
-        # see diagop, stackedop and extendedop for selected cases that
-        # are already available
-        raise Exception("Not implemented!")
-
     din, dout = subscripts.split("->")
     ddata, din = din.split(",")
+
+    issparse, sdata = array_shape(data)
+    data = np.asarray(data, dtype=object if issparse else None)
+
+    # determine shapes of input/output vectors
+    dims.update((d, sdata[i]) for i,d in enumerate(ddata))
+    sin = [dims[d] for d in din] if shape_in is None else shape_in
+    dims.update((d, sin[i]) for i,d in enumerate(din))
+    sout = [dims[d] for d in dout] if shape_out is None else shape_out
+    dims.update((d, sout[i]) for i,d in enumerate(dout))
+    nin, nout = int(np.prod(sin)), int(np.prod(sout))
+
+    # convert requested ordering to 'C' ordering
     if order in ['C','F']:
         order = (order, order)
     din = din[::-1] if order[0] == 'F' else din
+    sin = sin[::-1] if order[0] == 'F' else sin
     dout = dout[::-1] if order[1] == 'F' else dout
-
-    sdata = array_shape(data)
-    sin, sout = shape_in, shape_out
-    if sout is None:
-        sout = derive_shape(dout, (ddata, din), (sdata, sin))
-    nin, nout = np.prod(sin), np.prod(sout)
+    sout = sout[::-1] if order[1] == 'F' else sout
 
     # consistency check
     assert len(sdata) == len(ddata)
     assert len(sin) == len(din)
     assert len(sout) == len(dout)
 
-    # data is scalar: use broadcasting
-    if len(sdata) == 0:
-        assert len(ddata) == 0
-        if len(din) == 0:
-            if len(dout) == 0:
-                # case ",->" is trivial
-                return sp.coo_matrix(([data],([0],[0])), shape=(1,1))
-            else:
-                data = data*np.ones(sout[0])
-                ddata = dout[0]
-                sdata = (sout[0],)
+    # eliminate indices that only appear in input/output vectors
+    dcommon = "".join(d for d in din if d not in ddata and d in dout)
+
+    ain1 = [i for i,d in enumerate(din) if d not in ddata+dout]
+    ain2 = [din.index(d) for d in dcommon]
+    ain3 = [i for i in range(len(din)) if i not in ain1+ain2]
+    T_in = transposeopn(sin, ain2+ain3+ain1)
+    if len(ain1) != 0:
+        n1 = np.prod([sin[i] for i in ain1])
+        T_in = sp.kron(sp.eye(nin/n1), np.ones((1,n1))).dot(T_in)
+
+    aout1 = [i for i,d in enumerate(dout) if d not in ddata+din]
+    aout2 = [dout.index(d) for d in dcommon]
+    aout3 = [i for i in range(len(dout)) if i not in aout1+aout2]
+    T_out = transposeopn(sout, aout1+aout2+aout3).T
+    if len(aout1) != 0:
+        n1 = np.prod([sout[i] for i in aout1])
+        T_out = T_out.dot(sp.kron(np.ones((n1,1)), sp.eye(nout/n1)))
+
+    extra = int(np.prod([sin[i] for i in ain2]))
+    din = "".join(din[i] for i in ain3)
+    sin = tuple(sin[i] for i in ain3)
+    dout = "".join(dout[i] for i in aout3)
+    sout = tuple(sout[i] for i in aout3)
+    nin, nout = int(np.prod(sin)), int(np.prod(sout))
+
+    dcommon = "".join(d for d in ddata if d in din and d in dout)
+    if len(dcommon) > 0:
+        # handle indices that appear on all operands by recursion and block_diag
+        adata1 = [ddata.index(d) for d in dcommon]
+        adata2 = [i for i in range(len(ddata)) if i not in adata1]
+        if issparse and len(sdata)-1 in adata1 or len(sdata)-2 in adata1:
+            warnings.warn("Conversion to dense array in einsumop", UserWarning)
+            data = np.asarray([a.toarray() for a in data.ravel()])
+            data = data.reshape(sdata)
+            issparse = False
+
+        if issparse:
+            adata3 = [i for i in adata2 if i < len(sdata)-2]
+            sdata3 = tuple(sdata[i] for i in adata3)
+            sdata = sdata3 + sdata[-2:]
+            ddata = "".join(ddata[i] for i in adata3) + ddata[-2:]
+            data = data.transpose(adata1+adata3).reshape((-1,) + sdata3)
         else:
-            data = data*np.ones(sin[0])
-            ddata = din[0]
-            sdata = (sin[0],)
+            sdata = tuple(sdata[i] for i in adata2)
+            ddata = "".join(ddata[i] for i in adata2)
+            data = data.transpose(adata1+adata2).reshape((-1,) + sdata)
 
-    # broadcast a dimension for output if necessary
-    d = ddata[0]
-    iout = dout.find(d)
-    if iout >= 0:
-        assert sout[iout] == sdata[0]
-        T_out = transposeop(np.prod(sout[iout:]), np.prod(sout[:iout]))
-        dout = dout[iout:] + dout[:iout]
-        sout = sout[iout:] + sout[:iout]
-    else:
-        T_out = sp.kron(np.ones((1,sdata[0])), sp.eye(nout))
-        dout = ddata[0] + dout
-        sout = (sdata[0],) + sout
-    assert sout[0] == sdata[0]
+        ain1 = [din.index(d) for d in dcommon]
+        ain2 = [i for i in range(len(din)) if i not in ain1]
+        T_in2 = transposeopn(sin, ain1+ain2)
+        din = "".join(din[i] for i in ain2)
+        sin = tuple(sin[i] for i in ain2)
 
-    # strip left-most index from `data` and apply logic recursively
-    iin = din.find(d)
-    if iin >= 0:
-        # case "j...,j...->j..."
-        assert sin[iin] == sdata[0]
-        T_in = transposeop(np.prod(sin[:iin]), np.prod(sin[iin:]))
-        din, sin = din[iin:] + din[:iin], sin[iin:] + sin[:iin]
-        subscripts = "%s,%s->%s" % (ddata[1:], din[1:], dout[1:])
-        sin, sout = sin[1:], sout[1:]
+        aout1 = [dout.index(d) for d in dcommon]
+        aout2 = [i for i in range(len(dout)) if i not in aout1]
+        T_out2 = transposeopn(sout, aout1+aout2).T
+        dout = "".join(dout[i] for i in aout2)
+        sout = tuple(sout[i] for i in aout2)
+
+        subscripts = "%s,%s->%s" % (ddata, din, dout)
         op = sp.block_diag([einsumop(subscripts, A, sin, sout) for A in data])
+        op = T_out2.dot(op).dot(T_in2)
+    elif issparse and len(ddata) > 2 and all(d in dout for d in ddata[:-2]):
+        aout1 = [dout.index(d) for d in ddata[:-2]]
+        aout2 = [i for i in range(len(dout)) if i not in aout1]
+        T_out2 = transposeopn(sout, aout1+aout2).T
+        dout = "".join(dout[i] for i in aout2)
+        subscripts = "%s,%s->%s" % (ddata[-2:], din, dout)
+        op = sp.vstack([einsumop(subscripts, A, sin) for A in data.ravel()])
+        op = T_out2.dot(op)
+    elif issparse and len(ddata) == 2 and ddata in [din+dout, dout+din]:
+        # only trivial cases are supported for sparse data
+        data = data.ravel()[0]
+        if ddata == din:
+            # case "ij,ij->"
+            op = data.reshape(1,-1)
+        elif ddata == dout:
+            # case "ij,->ij"
+            op = data.reshape(-1,1)
+        elif ddata[1] == din:
+            # case "ij,j->i"
+            op = data
+        else:
+            # case "ij,i->j"
+            op = data.T
     else:
-        # case "j...,...->j..."
-        T_in = sp.eye(nin)
-        subscripts = "%s,%s->%s" % (ddata[1:], din, dout[1:])
-        sout = sout[1:]
-        op = sp.vstack([einsumop(subscripts, A, sin, sout) for A in data])
+        if issparse:
+            warnings.warn("Conversion to dense array in einsumop", UserWarning)
+            data = np.asarray([a.toarray() for a in data.ravel()])
+            data = data.reshape(sdata)
+            issparse = False
 
-    return T_out.dot(op).dot(T_in)
+        # sum over indices that appear only in data array
+        sum_axes = tuple([i for i,d in enumerate(ddata) if d not in dout+din])
+        data = data.sum(axis=sum_axes)
+
+        # reshaping reduces to simple matrix vector multiplication
+        data = data.transpose([ddata.index(d) for d in dout+din])
+        op = data.reshape(int(np.prod(sout)), int(np.prod(sin)))
+
+    return T_out.dot(sp.kron(sp.eye(extra), op)).dot(T_in)

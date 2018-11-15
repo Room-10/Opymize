@@ -179,9 +179,12 @@ class TangledMatrixMultR(LinOp):
         self.trans = trans
         self.A = A
         if adjoint is None:
+            subscripts =  'mkjl,jil->mik' if self.trans else 'jlmk,jil->mik'
+            self.spmat = einsumop(subscripts, self.A, self.x[0]['shape'])
             self.adjoint = TangledMatrixMultR(N, A, trans=not trans, adjoint=self)
         else:
             self.adjoint = adjoint
+            self.spmat = self.adjoint.spmat.T
         self._kernel = None
 
     def prepare_gpu(self, type_t="double"):
@@ -204,20 +207,6 @@ class TangledMatrixMultR(LinOp):
         assert y is not None
         if not add: y.fill(0.0)
         self._kernel(x, y)
-
-    def _call_cpu(self, x, y=None, add=False):
-        x = self.x.vars(x)[0]
-        y = self.y.vars(y)[0] if y is not None else x
-        if not add: y.fill(0.0)
-        descr = 'jil,mkjl->mik' if self.trans else 'jil,jlmk->mik'
-        y += np.einsum(descr, x, self.A)
-
-    def rowwise_lp(self, y, p=1, add=False):
-        y = self.y.vars(y)[0]
-        if not add: y.fill(0.0)
-        # uses broadcasting
-        A = self.A.transpose((2,3,0,1)) if self.trans else self.A
-        y += np.sum(np.abs(A)**p, axis=(0,1))[:,None,:]
 
 class MatrixMultRBatched(LinOp):
     """ Batched matrix multiplication from the right:

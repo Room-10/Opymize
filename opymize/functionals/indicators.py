@@ -1,11 +1,10 @@
 
 from opymize import Variable, Functional
-from opymize.operators import ConstOp, ConstrainOp, PosProj, NegProj, EpigraphProj
-from opymize.linear import sparse as osp
+from opymize.operators import ConstOp, ConstrainOp, PosProj, NegProj, \
+                              EpigraphProj, epigraph_Ab
 
 import numpy as np
 from numpy.linalg import norm
-import scipy
 
 class IndicatorFct(Functional):
     """ F(x) = c2 if x==c1 else infty (use broadcasting in c1 if necessary) """
@@ -128,23 +127,13 @@ class EpigraphFct(Functional):
         else:
             self.conj = conj
 
-        self._prox = EpigraphProj(I, J, v, b)
+        self.A = self.conj.A
+        self.b = self.conj.b
+        self._prox = EpigraphProj(I, J, v, b, Ab=(self.A, self.b))
 
     def __call__(self, x, grad=False):
         val = 0
-        x = self.x.vars(x)[0]
-
-        infeas = 0
-        for j in range(self.J.shape[0]):
-            for i in range(self.I.shape[0]):
-                xji = x[j,i]
-                mask = self.I[i,self.J[j]]
-                b = self.b[i,self.J[j]][mask]
-                A = np.zeros((b.size,3))
-                A[:,0:-1] = self.v[self.J[j]][mask]
-                A[:,-1] = -1.0
-                infeas = max(infeas, np.amax(A.dot(xji) - b))
-
+        infeas = max(0, np.amax(self.A.dot(x) - self.b))
         result = (val, infeas)
         if grad:
             result = result, self.x.new()
@@ -176,18 +165,15 @@ class EpigraphSupportFct(Functional):
         nfuns, npoints = I.shape
         nregions, nsubpoints = J.shape
         self.x = Variable((nregions, nfuns, 3))
+        self.A, self.b = epigraph_Ab(I, J, v, b)
 
-        bs = []
-        As = []
-        for subpoints in J:
-            for i in range(nfuns):
-                basei = I[i,subpoints]
-                bs.append(b[i,subpoints][basei])
-                A = -np.ones((bs[-1].size,3))
-                A[:,0:-1] = v[subpoints][basei]
-                As.append(A)
-        self.b = np.hstack(bs)
-        self.A = osp.block_diag_csr(As)
+        # maximize <x,y>  s.t. A y <= b using CVX
+        import cvxpy as cp
+        self.cp_x = cp.Parameter(self.x.size)
+        self.cp_y = cp.Variable(self.x.size)
+        self.cp_prob = cp.Problem(
+            cp.Maximize(self.cp_x*self.cp_y),
+            [cp.Constant(self.A)*self.cp_y <= cp.Constant(self.b)])
 
         if conj is None:
             self.conj = EpigraphFct(I, J, v, b, conj=self)
@@ -196,11 +182,10 @@ class EpigraphSupportFct(Functional):
 
     def __call__(self, x, grad=False):
         assert not grad
-        infeas = 0
-        x = self.x.vars(x)[0]
-
-        # minimize <-x,y>  s.t. A y <= b
-        val = -scipy.optimize.linprog(-x.ravel(), A_ub=self.A, b_ub=self.b,
-                                      method='interior-point').fun
-
+        infeas = val = 0
+        self.cp_x.value = x
+        self.cp_prob.solve(verbose=False, solver="MOSEK")
+        if self.cp_prob.status not in ["infeasible", "unbounded"]:
+            val = self.cp_prob.value
+        # TODO: add measure of infeasibility
         return val, infeas

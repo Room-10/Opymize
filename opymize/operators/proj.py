@@ -1,13 +1,10 @@
 
 from opymize import Variable, Operator, LinOp
 from opymize.linear import NihilOp
+from opymize.linear import sparse as osp
 
 import numpy as np
 import numba
-
-import cvxopt
-import cvxopt.solvers
-cvxopt.solvers.options['show_progress'] = False
 
 try:
     import opymize.tools.gpu
@@ -277,6 +274,19 @@ class L12ProjJacobian(LinOp):
         elif add:
             y += yy
 
+def epigraph_Ab(I, J, v, b):
+    nfuns, npoints = I.shape
+    nregions, nsubpoints = J.shape
+    As, bs = [], []
+    for subpoints in J:
+        for i in range(nfuns):
+            basei = I[i,subpoints]
+            bs.append(b[i,subpoints][basei])
+            A = -np.ones((bs[-1].size,3))
+            A[:,0:-1] = v[subpoints][basei]
+            As.append(A)
+    return (osp.block_diag_csr(As), np.hstack(bs))
+
 class EpigraphProj(Operator):
     """ T(x)[j,i] = proj[epi(f[i]_j*)](x[j,i])
 
@@ -297,7 +307,7 @@ class EpigraphProj(Operator):
 
     The solution is computed using a QP solver.
     """
-    def __init__(self, I, J, v, b):
+    def __init__(self, I, J, v, b, Ab=None):
         """
         Args:
             I : ndarray of bools, shape (nfuns, npoints)
@@ -313,9 +323,17 @@ class EpigraphProj(Operator):
         nfuns, npoints = I.shape
         nregions, nsubpoints = J.shape
         self.I, self.J, self.v, self.b = I, J, v, b
+        self.Ab = epigraph_Ab(I, J, v, b) if Ab is None else Ab
 
         self.x = Variable((nregions, nfuns, 3))
         self.y = self.x
+
+        import cvxpy as cp
+        self.cp_x = cp.Parameter(self.x.size)
+        self.cp_y = cp.Variable(self.y.size)
+        self.cp_prob = cp.Problem(
+            cp.Minimize(cp.sum_squares(self.cp_y - self.cp_x)),
+            [cp.Constant(self.Ab[0])*self.cp_y <= cp.Constant(self.Ab[1])])
 
     def prepare_gpu(self, type_t="double"):
         from pycuda import gpuarray
@@ -349,21 +367,7 @@ class EpigraphProj(Operator):
     def _call_cpu(self, x, y=None, add=False, jacobian=False):
         assert not add
         assert not jacobian
-        x = self.x.vars(x)[0]
-        y = x if y is None else self.y.vars(y)[0]
-        for j in range(self.J.shape[0]):
-            for i in range(self.I.shape[0]):
-                xji = x[j,i]
-                mask = self.I[i,self.J[j]]
-                b = self.b[i,self.J[j]][mask]
-                A = np.zeros((b.size,3))
-                A[:,0:-1] = self.v[self.J[j]][mask]
-                A[:,-1] = -1.0
-
-                # minimize  0.5*||y||**2 + <-xji,y>  s.t.  A y <= b
-                P = cvxopt.spmatrix(1.0, range(xji.size), range(xji.size))
-                q = -cvxopt.matrix(xji)
-                G = cvxopt.matrix(A)
-                h = cvxopt.matrix(b)
-                prog = cvxopt.solvers.qp(P, q, G, h, initvals={ 'x': -q })
-                y[j,i,:] = np.array(prog['x']).ravel()
+        y = x if y is None else y
+        self.cp_x.value = x
+        self.cp_prob.solve(verbose=False, solver="MOSEK")
+        y[:] = self.cp_y.value

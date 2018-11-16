@@ -244,8 +244,8 @@ def transposeopn(shape, axes):
         strides[t] = strides[t+1]*shape[t+1]
 
     strides, shape = [s[list(axes)] for s in [strides, shape]]
-    idx = np.asarray(list(np.ndindex(*shape))).dot(strides).astype(np.int64)
-    data = (np.ones(N), (range(N), idx))
+    idx = strides.dot(np.indices(shape, dtype=np.int64).reshape(ndims, -1))
+    data = (np.ones(N, dtype=np.int8), (np.arange(N), idx))
     return sp.coo_matrix(data, shape=(N,N), dtype=np.int8)
 
 def transposeop(m, n):

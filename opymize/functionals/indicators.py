@@ -1,6 +1,7 @@
 
 from opymize import Variable, Functional
 from opymize.operators import ConstOp, ConstrainOp, PosProj, NegProj, EpigraphProj
+from opymize.linear import sparse as osp
 
 import numpy as np
 from numpy.linalg import norm
@@ -174,9 +175,19 @@ class EpigraphSupportFct(Functional):
 
         nfuns, npoints = I.shape
         nregions, nsubpoints = J.shape
-        self.I, self.J, self.v, self.b = I, J, v, b
-
         self.x = Variable((nregions, nfuns, 3))
+
+        bs = []
+        As = []
+        for subpoints in J:
+            for i in range(nfuns):
+                basei = I[i,subpoints]
+                bs.append(b[i,subpoints][basei])
+                A = -np.ones((bs[-1].size,3))
+                A[:,0:-1] = v[subpoints][basei]
+                As.append(A)
+        self.b = np.hstack(bs)
+        self.A = osp.block_diag_csr(As)
 
         if conj is None:
             self.conj = EpigraphFct(I, J, v, b, conj=self)
@@ -188,20 +199,8 @@ class EpigraphSupportFct(Functional):
         infeas = 0
         x = self.x.vars(x)[0]
 
-        bs = []
-        As = []
-        for j in range(self.J.shape[0]):
-            for i in range(self.I.shape[0]):
-                mask = self.I[i,self.J[j]]
-                bs.append(self.b[i,self.J[j]][mask])
-                A = np.zeros((bs[-1].size,3))
-                A[:,0:-1] = self.v[self.J[j]][mask]
-                A[:,-1] = -1.0
-                As.append(A)
-        b = np.hstack(bs)
-        A = np.linalg.block_diag(*As)
-
         # minimize <-x,y>  s.t. A y <= b
-        val = -scipy.optimize.linprog(-x.ravel(), A_ub=A, b_ub=b).fun
+        val = -scipy.optimize.linprog(-x.ravel(), A_ub=self.A, b_ub=self.b,
+                                      method='interior-point').fun
 
         return val, infeas

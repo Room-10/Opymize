@@ -260,6 +260,15 @@ def extendedop(A, before=(), after=()):
     dims = { 'k': int(np.prod(before)), 'l': int(np.prod(after)) }
     return einsumop("ij,kjl->kil", A, dims=dims)
 
+def block_diag_csr(blocks):
+    heights, widths = [[B.shape[i] for B in blocks] for i in [0,1]]
+    indptr = np.r_[[0], np.cumsum(np.repeat(widths, heights))]
+    indices = np.r_[[0], np.cumsum(widths[:-1])]
+    indices = map(np.add, indices, map(np.arange, widths))
+    indices = np.hstack(map(np.tile, indices, heights))
+    data = np.hstack([B.ravel() for B in blocks])
+    return sp.csr_matrix((data, indices, indptr))
+
 def array_shape(data):
     if hasattr(data, 'shape'):
         return sp.issparse(data), data.shape

@@ -277,15 +277,13 @@ class L12ProjJacobian(LinOp):
 def epigraph_Ab(I, J, v, b):
     nfuns, npoints = I.shape
     nregions, nsubpoints = J.shape
-    As, bs = [], []
-    for subpoints in J:
-        for i in range(nfuns):
-            basei = I[i,subpoints]
-            bs.append(b[i,subpoints][basei])
-            A = -np.ones((bs[-1].size,3))
-            A[:,0:-1] = v[subpoints][basei]
-            As.append(A)
-    return (osp.block_diag_csr(As), np.hstack(bs))
+    bases = I[:,J].transpose(1,0,2)
+    bs = b[:,J].transpose(1,0,2)[bases]
+    As = -np.ones((bs.size, 3))
+    vJ = np.broadcast_arrays(v[J][:,None], bases[...,None])[0]
+    As[:,0:-1] = vJ[bases]
+    As = np.split(As, np.cumsum(bases.sum(axis=2))[:-1], axis=0)
+    return (osp.block_diag_csr(As), bs)
 
 class EpigraphProj(Operator):
     """ T(x)[j,i] = proj[epi(f[i]_j*)](x[j,i])

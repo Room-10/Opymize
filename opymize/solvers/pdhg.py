@@ -240,6 +240,10 @@ class PDHG(object):
         if continue_at is not None:
             i['xk'][:], i['yk'][:] = continue_at
 
+        if term_maxiter == 0:
+            self.info['iter'] = 0
+            return self.info
+
         i.update([(s,i['xk'].copy()) for s in ['xkp1','xgradk','xgradkp1']])
         i.update([(s,i['yk'].copy()) for s in ['ykp1','ygradk','ygradkp1','ygradbk']])
 

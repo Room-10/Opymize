@@ -70,15 +70,16 @@ class IndexedMult(LinOp):
         self.y = Variable((B.shape[0],N,B.shape[1]))
         self.P = P
         self.B = B
+
+        self._kernel = None
+        spP = [idxop(Pj, K) for Pj in P]
+        spP = einsumop("jlk,ik->jil", spP, dims={ 'i': N })
+        self.spmat = -einsumop("jml,jil->jim", B, dims={ 'i': N }).dot(spP)
+
         if adjoint is None:
             self.adjoint = IndexedMultAdj(K, N, P, B, adjoint=self)
         else:
             self.adjoint = adjoint
-        self._kernel = None
-
-        spP = [idxop(Pj, K) for Pj in P]
-        spP = einsumop("jlk,ik->jil", spP, dims={ 'i': N })
-        self.spmat = -einsumop("jml,jil->jim", B, dims={ 'i': N }).dot(spP)
 
     def prepare_gpu(self, kernels=None, type_t="double"):
         if self._kernel is not None: return

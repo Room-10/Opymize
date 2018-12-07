@@ -111,8 +111,8 @@ if __name__ == "__main__":
     for s in range(1,4):
         test_grad_fun(s)
 
-    print("=> Testing Laplacian operator...")
-    for bdry in ["neumann","curvature"]:
+    for bdry in ["curvature", "neumann", "second-order"]:
+        print("=> Testing Laplacian operator with %s bc..." % bdry)
         test_lplcn(bdry)
         for s in range(1,4):
             test_lplcn_fun(bdry, s)

@@ -167,7 +167,10 @@ class DivergenceOp(LinOp):
         self._kernels['divergence'](x, y)
 
 class LaplacianOp(LinOp):
-    """ Laplacian operator with different boundary conditions """
+    """ Laplacian operator with various boundary conditions """
+    supported_bc = ["curvature", "curvature_adj",
+                    "second-order", "second-order_adj",
+                    "neumann",]
     def __init__(self, imagedims, nchannels, imageh=None,
                        boundary="neumann", adjoint=None):
         LinOp.__init__(self)
@@ -175,31 +178,31 @@ class LaplacianOp(LinOp):
         ndims = len(imagedims)
         self.imagedims = imagedims
         self.imageh = np.ones(ndims) if imageh is None else imageh
-        self.boundary = boundary
+        self.bc = boundary
         self.nchannels = nchannels
         self.x = Variable((npoints, nchannels))
         self.y = Variable((npoints, nchannels))
         self._kernel = None
 
-        if self.boundary != "curvature_adj":
+        if self.bc[-4:] != "_adj":
             self.spmat = lplcnop2(self.imagedims, components=self.nchannels,
-                                  steps=self.imageh, boundaries=self.boundary)
+                                  steps=self.imageh, boundaries=self.bc)
 
-        if self.boundary == "neumann":
+        if self.bc == "neumann":
             self.adjoint = self
-        elif self.boundary[:9] == "curvature":
+        elif self.bc in self.supported_bc:
             if adjoint is None:
-                adj_boundary = "curvature_adj"
-                if self.boundary == adj_boundary:
-                    adj_boundary = "curvature"
+                adj_bc = self.bc[:-4]
+                if self.bc[-4:] != "_adj":
+                    adj_bc = "%s_adj" % self.bc
                 self.adjoint = LaplacianOp(imagedims, nchannels, imageh=imageh,
-                                           boundary=adj_boundary, adjoint=self)
+                                           boundary=adj_bc, adjoint=self)
             else:
                 self.adjoint = adjoint
         else:
-            raise Exception("Unknown boundary conditions: %s" % self.boundary)
+            raise Exception("Unknown boundary conditions: %s" % self.bc)
 
-        if self.boundary == "curvature_adj":
+        if self.bc[-4:] == "_adj":
             self.spmat = self.adjoint.spmat.T
 
     def prepare_gpu(self, type_t="double"):
@@ -209,8 +212,8 @@ class LaplacianOp(LinOp):
         skips = imagedim_skips(self.imagedims)
         constvars = {
             'LAPLACIAN': 1,
-            'ADJOINT': 1 if self.boundary[-3:] == "adj" else 0,
-            'boundary_conditions': self.boundary[0].upper(),
+            'ADJOINT': 1 if self.bc[-4:] == "_adj" else 0,
+            'boundary_conditions': self.bc[0].upper(),
             'N': npoints, 'D': ndims, 'C': self.nchannels,
             'skips': np.array(skips, dtype=np.int64, order='C'),
             'imagedims': np.array(self.imagedims, dtype=np.int64, order='C'),

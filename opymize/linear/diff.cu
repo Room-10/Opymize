@@ -175,6 +175,33 @@ __global__ void laplacian(TYPE_T *x, TYPE_T *y)
                +  invh2*(x[(i + skips[tt])*C + k] - xik);
     }
 #endif
+#elif boundary_conditions == 'S'
+#if ADJOINT
+    for (tt = 0; tt < D; tt++) {
+        invh2 = 1.0/(imageh[tt]*imageh[tt]);
+
+        if (coords[tt] > 0 && coords[tt] < imagedims[tt]-1) {
+            newval -= invh2*2*xik;
+        }
+
+        if (coords[tt] > 1) {
+            newval += invh2*x[(i - skips[tt])*C + k];
+        }
+
+        if (coords[tt] < imagedims[tt]-2) {
+            newval += invh2*x[(i + skips[tt])*C + k];
+        }
+    }
+#else // !ADJOINT
+    for (tt = 0; tt < D; tt++) {
+        invh2 = 1.0/(imageh[tt]*imageh[tt]);
+
+        if (coords[tt] > 0 && coords[tt] < imagedims[tt]-1) {
+            newval += invh2*(x[(i - skips[tt])*C + k] - 2*xik
+                             + x[(i + skips[tt])*C + k]);
+        }
+    }
+#endif
 #else // boundary_conditions == 'N'
     for (tt = 0; tt < D; tt++) {
         invh2 = 1.0/(imageh[tt]*imageh[tt]);

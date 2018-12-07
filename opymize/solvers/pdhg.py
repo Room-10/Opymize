@@ -229,7 +229,7 @@ class PDHG(object):
     def solve(self, continue_at=None, precision="double",
                     steps="const", step_bound=None, step_factor=1.0,
                     term_pd_gap=1e-5, term_pd_res=None, term_maxiter=int(5e4),
-                    granularity=5000, use_gpu=True):
+                    granularity=5000, use_gpu=True, cbfun=None):
         i = self.itervars
         c = self.constvars
 
@@ -314,6 +314,9 @@ class PDHG(object):
                         infeasp, infeasd = self.info['infeasp'], self.info['infeasd']
                         test_infeas = max(infeasp, infeasd) < term_pd_gap[1]
                         test_term = test_err and test_infeas
+
+                    if cbfun is not None:
+                        cbfun(_iter, self.state, self.info)
 
                     if test_term or interrupt_hdl.interrupted:
                         break

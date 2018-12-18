@@ -107,6 +107,64 @@ __global__ void l1normsproj(TYPE_T *x)
 }
 #endif
 
+#ifdef QUAD_EPI_PROJ
+inline __device__ TYPE_T solve_reduced_monic_cubic(TYPE_T a, TYPE_T b)
+{
+    if (a == 0.0) {
+        return (b == 0.0) ? 0.0 : CBRT(-b);
+    } else if (b == 0.0 && a > 0.0) {
+        return 0.0;
+    }
+
+    TYPE_T theta, sqrt_Q, AD;
+    TYPE_T Q = a/3.0;
+    TYPE_T R = -b/2.0;
+    TYPE_T Q3 = Q*Q*Q;
+    TYPE_T D = Q3 + R*R;
+
+    if (D <= 0.0) {
+        theta = ACOS(R/SQRT(-Q3));
+        sqrt_Q = SQRT(-Q);
+        return 2.0*sqrt_Q*COS(theta/3.0);
+    } else {
+        AD = CBRT(FABS(R) + SQRT(D));
+        if (R < 0.0) AD *= -1.0;
+        return AD - Q/AD;
+    }
+}
+
+__global__ void quadepiproj(TYPE_T *x)
+{
+    // global thread index
+    int i = blockIdx.x*blockDim.x + threadIdx.x;
+
+    // stay inside maximum dimensions
+    if (i >= N) return;
+
+    // iteration variables and misc.
+    int mm;
+    TYPE_T *x1 = &x[i*(M+1)];
+    TYPE_T *x2 = &x[i*(M+1) + M];
+    TYPE_T x1norm, y1norm, l2;
+    TYPE_T x1norm_sq = 0.0;
+
+    for (mm = 0; mm < M; mm++) {
+        x1norm_sq += x1[mm]*x1[mm];
+    }
+
+    if (0.5*lbd*x1norm_sq > x2[0]) {
+        x1norm = SQRT(x1norm_sq);
+        l2 = 2.0/(lbd*lbd);
+        y1norm = solve_reduced_monic_cubic(l2*(1 - lbd*x2[0]), -l2*x1norm);
+        x1norm = y1norm/x1norm;
+        for (mm = 0; mm < M; mm++) {
+            x1[mm] *= x1norm;
+        }
+        x2[0] = 0.5*lbd*y1norm*y1norm;
+    }
+}
+#endif
+
 #ifdef EPIGRAPH_PROJ
 #include <stdio.h>
 

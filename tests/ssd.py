@@ -1,7 +1,7 @@
 
 import numpy as np
 
-from opymize.functionals.ssd import SSD
+from opymize.functionals.quad import SSD
 from opymize.tools.tests import checkFctDerivative
 
 N = 23

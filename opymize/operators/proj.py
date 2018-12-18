@@ -1,5 +1,6 @@
 
 from opymize import Variable, Operator, LinOp
+from opymize.tools import solve_reduced_monic_cubic
 from opymize.linear import NihilOp
 from opymize.linear import sparse as osp
 
@@ -273,6 +274,58 @@ class L12ProjJacobian(LinOp):
             else: x[:] = yy
         elif add:
             y += yy
+
+class QuadEpiProj(Operator):
+    """ T(z)[i] = proj[epi(f*)](z[i])  where  f(x) = 0.5*lbd*|x|**2
+
+    Orthogonal projections onto a paraboloid which requires root finding for
+    cubic polynomials.
+    """
+    def __init__(self, N, M, lbd):
+        Operator.__init__(self)
+        self.N, self.M = N, M
+        self.x = Variable((self.N, self.M + 1))
+        self.y = self.x
+        self.lbd = lbd
+
+    def prepare_gpu(self, type_t="double"):
+        constvars = {
+            'QUAD_EPI_PROJ': 1,
+            'lbd': self.lbd,
+            'N': self.N, 'M': self.M,
+            'TYPE_T': type_t,
+        }
+        for f in ['sqrt','cbrt','acos','cos','fabs']:
+            constvars[f.upper()] = f if type_t == "double" else (f+"f")
+        files = [resource_stream('opymize.operators', 'proj.cu')]
+        templates = [("quadepiproj", "P", (self.N, 1, 1), (200, 1, 1))]
+        self._kernel = prepare_kernels(files, templates, constvars)['quadepiproj']
+
+    def _call_gpu(self, x, y=None, add=False, jacobian=False):
+        assert not add
+        assert not jacobian
+        if y is not None:
+            y[:] = x.copy()
+            x = y
+        self._kernel(x)
+
+    def _call_cpu(self, x, y=None, add=False, jacobian=False):
+        assert not add
+        assert not jacobian
+        if y is None:
+            y = x
+        else:
+            y[:] = x
+        x = self.x.vars(x)[0]
+        y = self.y.vars(y)[0]
+        xnorms = np.linalg.norm(x[:,0:-1], ord=2, axis=1)
+        msk = (0.5*self.lbd*xnorms**2 > x[:,-1])
+        lbd_2 = 2.0/self.lbd**2
+        a = lbd_2*(1 - self.lbd*x[msk,-1])
+        b = -lbd_2*xnorms[msk]
+        ynorms = solve_reduced_monic_cubic(a, b)
+        y[msk,0:-1] *= (ynorms/xnorms[msk])[:,None]
+        y[msk,-1] = 0.5*self.lbd*ynorms**2
 
 def epigraph_Ab(I, J, v, b):
     nfuns, npoints = I.shape

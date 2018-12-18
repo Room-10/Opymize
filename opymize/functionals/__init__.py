@@ -4,7 +4,7 @@ from opymize.operators import SplitOp
 from opymize.functionals.affine import *
 from opymize.functionals.indicators import *
 from opymize.functionals.l1norms import *
-from opymize.functionals.ssd import *
+from opymize.functionals.quad import *
 
 class SplitSum(Functional):
     """ F(x1,x2,...) = F1(x1) + F2(x2) + ... """

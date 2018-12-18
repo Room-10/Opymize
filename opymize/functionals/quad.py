@@ -1,6 +1,7 @@
 
 from opymize import Variable, Functional
 from opymize.operators.affine import ShiftScaleOp
+from opymize.operators.proj import QuadEpiProj
 
 import numpy as np
 
@@ -52,4 +53,46 @@ class SSD(Functional):
         if hasattr(self._prox, 'gpuvars'):
             self._prox.gpuvars['a'][:] = self._prox.a
             self._prox.gpuvars['b'][:] = self._prox.b
+        return self._prox
+
+class QuadSupport(Functional):
+    """ \sum_i 0.5*lbd*|x[i,0:-1]|^2/|x[i,-1]| if x[i,-1] < 0
+        and inf if x[i,-1] >= 0
+    """
+    def __init__(self, N, M, lbd, conj=None):
+        Functional.__init__(self)
+        self.x = Variable((N, M + 1))
+        self.lbd = lbd
+        self.conj = QuadEpiInd(N, M, lbd, conj=self) if conj is None else conj
+
+    def __call__(self, x, grad=False):
+        assert not grad
+        x = self.x.vars(x)[0]
+        msk = x[:,-1] < 0
+        val = -0.5*self.lbd*((x[:,0:-1]**2).sum(axis=1)[msk]/x[msk,-1]).sum()
+        infeas = np.linalg.norm(x[np.logical_not(msk),-1], ord=np.inf)
+        return (val, infeas)
+
+class QuadEpiInd(Functional):
+    """ \sum_i \delta_{0.5*|x[i,0:-1]|^2 \leq lbd*x[i,-1]} """
+    def __init__(self, N, M, lbd, conj=None):
+        Functional.__init__(self)
+        self.x = Variable((N, M + 1))
+        self.lbd = lbd
+        self.conj = QuadSupport(N, M, lbd, conj=self) if conj is None else conj
+        self._prox = QuadEpiProj(N, M, lbd)
+
+    def __call__(self, x, grad=False):
+        assert not grad
+        x = self.x.vars(x)[0]
+        dif = 0.5*(x[:,0:-1]**2).sum(axis=1) - lbd*x[:,-1]
+        val = 0
+        infeas = np.linalg.norm(np.fmax(0, dif), ord=np.inf)
+        result = (val, infeas)
+        if grad:
+            result = result, self.x.new()
+        return result
+
+    def prox(self, tau):
+        # independent of tau!
         return self._prox

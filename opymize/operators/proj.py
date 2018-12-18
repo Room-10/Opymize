@@ -319,7 +319,9 @@ class QuadEpiProj(Operator):
         x = self.x.vars(x)[0]
         y = self.y.vars(y)[0]
         xnorms = np.linalg.norm(x[:,0:-1], ord=2, axis=1)
-        msk = (0.5*self.lbd*xnorms**2 > x[:,-1])
+        msk = np.logical_and(xnorms == 0.0, 0.0 > x[:,-1])
+        y[msk,-1] = 0.0
+        msk = np.logical_and(xnorms > 0 , 0.5*self.lbd*xnorms**2 > x[:,-1])
         lbd_2 = 2.0/self.lbd**2
         a = lbd_2*(1 - self.lbd*x[msk,-1])
         b = -lbd_2*xnorms[msk]

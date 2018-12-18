@@ -85,7 +85,7 @@ class QuadEpiInd(Functional):
     def __call__(self, x, grad=False):
         assert not grad
         x = self.x.vars(x)[0]
-        dif = 0.5*(x[:,0:-1]**2).sum(axis=1) - lbd*x[:,-1]
+        dif = 0.5*(x[:,0:-1]**2).sum(axis=1) - self.lbd*x[:,-1]
         val = 0
         infeas = np.linalg.norm(np.fmax(0, dif), ord=np.inf)
         result = (val, infeas)

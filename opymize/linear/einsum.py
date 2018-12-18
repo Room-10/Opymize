@@ -26,9 +26,12 @@ class MatrixMult(LinOp):
         self.trans = trans
         self.A = A
         if adjoint is None:
+            subscripts =  'kj,ki->ji' if self.trans else 'jk,ki->ji'
+            self.spmat = einsumop(subscripts, self.A, self.x[0]['shape'])
             self.adjoint = MatrixMult(N, A, trans=not trans, adjoint=self)
         else:
             self.adjoint = adjoint
+            self.spmat = self.adjoint.spmat.T
         self._kernel = None
 
     def prepare_gpu(self, type_t="double"):
@@ -52,22 +55,6 @@ class MatrixMult(LinOp):
         if not add: y.fill(0.0)
         self._kernel(x, y)
 
-    def _call_cpu(self, x, y=None, add=False):
-        x = self.x.vars(x)[0]
-        y = self.y.vars(y)[0] if y is not None else x
-        if not add: y.fill(0.0)
-        descr = 'kj,ki->ji' if self.trans else 'jk,ki->ji'
-        y += np.einsum(descr, self.A, x)
-
-    def rowwise_lp(self, y, p=1, add=False):
-        y = self.y.vars(y)[0]
-        # uses broadcasting
-        A = self.A.T if self.trans else self.A
-        if add:
-            y += np.sum(np.abs(A)**p, axis=1)[:,None]
-        else:
-            y[:] = np.sum(np.abs(A)**p, axis=1)[:,None]
-
 class MatrixMultR(LinOp):
     """ Matrix multiplication from the right:
         y_ij = \sum_k x_ik * A_kj
@@ -80,9 +67,12 @@ class MatrixMultR(LinOp):
         self.trans = trans
         self.A = A
         if adjoint is None:
+            subscripts =  'jk,ik->ij' if self.trans else 'kj,ik->ij'
+            self.spmat = einsumop(subscripts, self.A, self.x[0]['shape'])
             self.adjoint = MatrixMultR(N, A, trans=not trans, adjoint=self)
         else:
             self.adjoint = adjoint
+            self.spmat = self.adjoint.spmat.T
         self._kernel = None
 
     def prepare_gpu(self, type_t="double"):
@@ -106,22 +96,6 @@ class MatrixMultR(LinOp):
         if not add: y.fill(0.0)
         self._kernel(x, y)
 
-    def _call_cpu(self, x, y=None, add=False):
-        x = self.x.vars(x)[0]
-        y = self.y.vars(y)[0] if y is not None else x
-        if not add: y.fill(0.0)
-        descr = 'ik,jk->ij' if self.trans else 'ik,kj->ij'
-        y += np.einsum(descr, x, self.A)
-
-    def rowwise_lp(self, y, p=1, add=False):
-        y = self.y.vars(y)[0]
-        # uses broadcasting
-        A = self.A.T if self.trans else self.A
-        if add:
-            y += np.sum(np.abs(A)**p, axis=0)[None,:]
-        else:
-            y[:] = np.sum(np.abs(A)**p, axis=0)[None,:]
-
 class MatrixOp(LinOp):
     """ y_i = \sum_j A_ij * x_j """
     def __init__(self, A):
@@ -137,6 +111,7 @@ class DiagMatrixMultR(LinOp):
         self.y = Variable((N,A.size))
         self.A = A
         self.adjoint = self
+        self.spmat = einsumop('k,ik->ik', self.A, self.x[0]['shape'])
         self._kernel = None
         self.A_gpu = None
 
@@ -151,17 +126,6 @@ class DiagMatrixMultR(LinOp):
         assert y is not None
         if not add: y.fill(0.0)
         self._kernel_add(x, y, self.A_gpu)
-
-    def _call_cpu(self, x, y=None, add=False):
-        x = self.x.vars(x)[0]
-        y = self.y.vars(y)[0] if y is not None else x
-        if not add: y.fill(0.0)
-        y += np.einsum('ik,k->ik', x, self.A)
-
-    def rowwise_lp(self, y, p=1, add=False):
-        y = self.y.vars(y)[0]
-        if not add: y.fill(0.0)
-        y += np.abs(self.A)[None,:]
 
 class TangledMatrixMultR(LinOp):
     """ Entangled matrix multiplication from the right:

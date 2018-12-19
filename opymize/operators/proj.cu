@@ -154,15 +154,15 @@ __global__ void quadepiproj(TYPE_T *x)
 
     if (x1norm_sq == 0.0 && 0.0 > x2[0]) {
         x2[0] = 0.0;
-    } else if (0.5*lbd*x1norm_sq > x2[0]) {
+    } else if (0.5/lbd*x1norm_sq > x2[0]) {
         x1norm = SQRT(x1norm_sq);
-        l2 = 2.0/(lbd*lbd);
-        y1norm = solve_reduced_monic_cubic(l2*(1 - lbd*x2[0]), -l2*x1norm);
+        l2 = 2.0*(lbd*lbd);
+        y1norm = solve_reduced_monic_cubic(l2*(1 - x2[0]/lbd), -l2*x1norm);
         x1norm = y1norm/x1norm;
         for (mm = 0; mm < M; mm++) {
             x1[mm] *= x1norm;
         }
-        x2[0] = 0.5*lbd*y1norm*y1norm;
+        x2[0] = 0.5/lbd*y1norm*y1norm;
     }
 }
 #endif

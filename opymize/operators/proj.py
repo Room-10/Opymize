@@ -321,13 +321,13 @@ class QuadEpiProj(Operator):
         xnorms = np.linalg.norm(x[:,0:-1], ord=2, axis=1)
         msk = np.logical_and(xnorms == 0.0, 0.0 > x[:,-1])
         y[msk,-1] = 0.0
-        msk = np.logical_and(xnorms > 0 , 0.5*self.lbd*xnorms**2 > x[:,-1])
-        lbd_2 = 2.0/self.lbd**2
-        a = lbd_2*(1 - self.lbd*x[msk,-1])
+        msk = np.logical_and(xnorms > 0 , 0.5/self.lbd*xnorms**2 > x[:,-1])
+        lbd_2 = 2.0*self.lbd**2
+        a = lbd_2*(1 - x[msk,-1]/self.lbd)
         b = -lbd_2*xnorms[msk]
         ynorms = solve_reduced_monic_cubic(a, b)
         y[msk,0:-1] *= (ynorms/xnorms[msk])[:,None]
-        y[msk,-1] = 0.5*self.lbd*ynorms**2
+        y[msk,-1] = 0.5/self.lbd*ynorms**2
 
 def epigraph_Ab(I, J, v, b):
     nfuns, npoints = I.shape

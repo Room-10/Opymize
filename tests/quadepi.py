@@ -10,7 +10,7 @@ for i in range(10):
     lbd = 20*np.random.rand()
     N = np.random.randint(1,10)
     M = np.random.randint(1,5)
-    f = lambda x1: 0.5*lbd*np.sum(x1**2, axis=1)
+    f = lambda x1: 0.5/lbd*np.sum(x1**2, axis=1)
     op = QuadEpiProj(N, M, lbd)
     test_gpu_op(op)
 

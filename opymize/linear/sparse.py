@@ -16,22 +16,30 @@ def lplcnop2(dims, components=1, steps=None, boundaries="neumann"):
         components : int
             for vector-valued images
         boundaries : (optional)
-            one of 'neumann' (default), 'dirichlet', 'second-order' or 'curvature'
+            one of 'neumann' (default), 'dirichlet', 'second-order', 'neumann2'
+            or 'curvature'
     """
     if steps is None:
         steps = np.ones(len(dims))
 
     def dd(n):
         diags = np.ones(n)*np.array([[1, -2, 1]]).T
+        diagidx = [-1, 0, 1]
         if boundaries in ["curvature", "second-order"]:
             diags[[0,0,1,1,2,2],[-2,-1,0,-1,0,1]] = 0
+        elif boundaries == "neumann2":
+            diagidx += [-2, 2]
+            diags = np.vstack(diags, np.zeros(2,n))
+            diags[[1,1],[0,-1]] = 1
+            diags[[0,2],[-2,1]] = -2
+            diags[[3,4],[-3,2]] = 1
         elif boundaries == "neumann":
             diags[[1,1],[0,-1]] = -1
         elif boundaries == "dirichlet":
             pass
         else:
             raise Exception("Unsupported boundary condition: %s" % boundaries)
-        return sp.spdiags(diags, [-1, 0, 1], n, n)
+        return sp.spdiags(diags, diagidx, n, n)
 
     def eye(n):
         if boundaries == "curvature":

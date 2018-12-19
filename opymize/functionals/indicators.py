@@ -174,6 +174,9 @@ class EpigraphSupportFct(Functional):
         self.cp_prob = cp.Problem(
             cp.Maximize(self.cp_x*self.cp_y),
             [cp.Constant(self.A)*self.cp_y <= cp.Constant(self.b)])
+        self.checks = -np.ones((nregions, 3, 3))
+        self.checks[:,:,0:2] = v[J[:,0:3],:]
+        self.checks[:] = np.linalg.inv(self.checks).transpose(0,2,1)
 
         if conj is None:
             self.conj = EpigraphFct(I, J, v, b, conj=self)
@@ -182,10 +185,11 @@ class EpigraphSupportFct(Functional):
 
     def __call__(self, x, grad=False):
         assert not grad
-        infeas = val = 0
-        self.cp_x.value = x
+        x = self.x.vars(x)[0]
+        infeas = np.einsum("jkl,jil->jik", self.checks, x).reshape(-1, 3)
+        infeas = np.amax(np.fmax(0, -infeas), axis=-1)
+        x_masked = x.copy().reshape(-1, 3)
+        x_masked[infeas > 0] = 0
+        self.cp_x.value = x_masked.ravel()
         self.cp_prob.solve(verbose=False, solver="MOSEK")
-        if self.cp_prob.status not in ["infeasible", "unbounded"]:
-            val = self.cp_prob.value
-        # TODO: add measure of infeasibility
-        return val, infeas
+        return self.cp_prob.value, infeas.sum()

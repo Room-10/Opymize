@@ -192,4 +192,6 @@ class EpigraphSupportFct(Functional):
         x_masked[infeas > 0] = 0
         self.cp_x.value = x_masked.ravel()
         self.cp_prob.solve(verbose=False, solver="MOSEK")
+        if self.cp_prob.status != "optimal":
+            print("EpigraphSupportFct: problem %s" % self.cp_prob.status)
         return self.cp_prob.value, infeas.sum()

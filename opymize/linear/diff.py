@@ -1,6 +1,6 @@
 
 from opymize import Variable, LinOp
-from opymize.linear.sparse import diffopn, lplcnop2
+from opymize.linear.sparse import diffopn, lplcnopn
 
 import numpy as np
 
@@ -185,7 +185,7 @@ class LaplacianOp(LinOp):
         self._kernel = None
 
         if self.bc[-4:] != "_adj":
-            self.spmat = lplcnop2(self.imagedims, components=self.nchannels,
+            self.spmat = lplcnopn(self.imagedims, components=self.nchannels,
                                   steps=self.imageh, boundaries=self.bc)
 
         if self.bc == "neumann":

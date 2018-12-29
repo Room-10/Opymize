@@ -1,5 +1,6 @@
 
 import warnings
+from functools import reduce
 
 import numpy as np
 import scipy.sparse as sp
@@ -7,15 +8,17 @@ import scipy.sparse as sp
 # sparse matrix representations of selected linear operations
 # all functions assume 'C' order ravelling if not specified otherwise
 
-def lplcnop2(dims, components=1, steps=None, boundaries="neumann"):
-    """ Two-dimensional finite difference Laplacian operator
+def lplcnopn(dims, components=1, steps=None, boundaries="neumann"):
+    """ n-dimensional finite difference Laplacian operator
 
     Args:
-        dims : pair of ints
+        dims : list of ints, shape (ndims,)
             shape of the image domain
-        components : int
+        components : (optional) int
             for vector-valued images
-        boundaries : (optional)
+        steps : (optional) ndarray of floats, shape (ndims,)
+            grid step sizes
+        boundaries : (optional) string
             one of 'neumann' (default), 'dirichlet', 'second-order', 'neumann2'
             or 'curvature'
     """
@@ -41,17 +44,21 @@ def lplcnop2(dims, components=1, steps=None, boundaries="neumann"):
             raise Exception("Unsupported boundary condition: %s" % boundaries)
         return sp.spdiags(diags, diagidx, n, n)
 
-    def eye(n):
-        if boundaries == "curvature":
+    npoints = np.prod(dims)
+    Delta = sp.coo_matrix((npoints, npoints))
+    for t,size in enumerate(dims):
+        partial2_t = dd(size)/steps[t]**2
+        partial2_t = extendedop(partial2_t, before=dims[:t], after=dims[(t+1):])
+        Delta += partial2_t
+
+    if boundaries == "curvature":
+        zero_bdry = []
+        for n in dims:
             diags = np.ones((1,n))
             diags[0,[0,-1]] = 0
-            return sp.spdiags(diags, [0], n, n)
-        else:
-            return sp.eye(n)
+            zero_bdry.append(sp.spdiags(diags, [0], n, n))
+        Delta = reduce(sp.kron, zero_bdry).dot(Delta)
 
-    n1, n2 = dims
-    Delta = sp.kron( dd(n1),eye(n2))/steps[0]**2 \
-          + sp.kron(eye(n1), dd(n2))/steps[1]**2
     return einsumop("ij,jk->ik", Delta, dims={ 'k': components })
 
 def diffopn(dims, components=1, steps=None, weights=None,

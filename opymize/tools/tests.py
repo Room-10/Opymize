@@ -67,8 +67,12 @@ def test_rowwise_lp(op, p=1, maxiter=10):
     print("rowwise l^p tested successfully")
 
 def test_gpu_op(op, type_t="double"):
-    import opymize.tools.gpu
-    from pycuda import gpuarray
+    try:
+        import opymize.tools.gpu
+        from pycuda import gpuarray
+    except ModuleNotFoundError:
+        print("Warning: Skipping GPU test due to missing pycuda!")
+        return
 
     np_dtype = np.float64 if type_t == "double" else np.float32
     x, Ax = op.x.new(dtype=np_dtype), op.y.new(dtype=np_dtype)

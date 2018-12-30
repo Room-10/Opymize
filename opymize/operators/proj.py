@@ -332,9 +332,10 @@ class QuadEpiProj(Operator):
 def epigraph_Ab(I, J, v, b):
     nfuns, npoints = I.shape
     nregions, nsubpoints = J.shape
+    ndim = v.shape[1]
     bases = I[:,J].transpose(1,0,2)
     bs = b[:,J].transpose(1,0,2)[bases]
-    As = -np.ones((bs.size, 3))
+    As = -np.ones((bs.size, ndim+1))
     vJ = np.broadcast_arrays(v[J][:,None], bases[...,None])[0]
     As[:,0:-1] = vJ[bases]
     As = np.split(As, np.cumsum(bases.sum(axis=2))[:-1], axis=0)
@@ -365,23 +366,24 @@ class EpigraphProj(Operator):
         Args:
             I : ndarray of bools, shape (nfuns, npoints)
             J : ndarray of ints, shape (nregions, nsubpoints)
-            v : ndarray of floats, shape (npoints, 2)
+            v : ndarray of floats, shape (npoints, ndim)
             b : ndarray of floats, shape (nfuns, npoints)
         """
         Operator.__init__(self)
         assert I.shape == b.shape
         assert I.shape[1] == v.shape[0]
-        assert v.shape[1] == 2
 
         nfuns, npoints = I.shape
         nregions, nsubpoints = J.shape
+        ndim = v.shape[1]
         self.I, self.J, self.v, self.b = I, J, v, b
         self.Ab = epigraph_Ab(I, J, v, b) if Ab is None else Ab
 
-        self.x = Variable((nregions, nfuns, 3))
+        self.x = Variable((nregions, nfuns, ndim+1))
         self.y = self.x
 
         import cvxpy as cp
+        self.cp_tol = 1e-7
         self.cp_x = cp.Parameter(self.x.size)
         self.cp_y = cp.Variable(self.y.size)
         self.cp_prob = cp.Problem(
@@ -393,14 +395,15 @@ class EpigraphProj(Operator):
 
         nfuns, npoints = self.I.shape
         nregions, nsubpoints = self.J.shape
+        ndim = self.v.shape[1]
 
         constvars = {
             'EPIGRAPH_PROJ': 1,
-            'nfuns': nfuns, 'nregions': nregions,
+            'ndim': ndim, 'nfuns': nfuns, 'nregions': nregions,
             'npoints': npoints, 'nsubpoints': nsubpoints,
             'I': self.I, 'J': self.J,
             'A_STORE': self.v, 'B_STORE': self.b,
-            'term_maxiter': 2*nsubpoints, 'term_tolerance': 1e-9,
+            'term_maxiter': ndim*nsubpoints, 'term_tolerance': 1e-9,
             'TYPE_T': type_t,
         }
         for f in ['fabs']:
@@ -420,7 +423,9 @@ class EpigraphProj(Operator):
     def _call_cpu(self, x, y=None, add=False, jacobian=False):
         assert not add
         assert not jacobian
-        y = x if y is None else y
+        x = x.ravel()
+        y = x if y is None else y.ravel()
         self.cp_x.value = x
-        self.cp_prob.solve(verbose=False, solver="MOSEK")
+        self.cp_prob.solve(verbose=False, solver="MOSEK",
+            mosek_params={ 'MSK_DPAR_INTPNT_CO_TOL_REL_GAP': self.cp_tol })
         y[:] = self.cp_y.value

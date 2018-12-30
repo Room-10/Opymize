@@ -178,19 +178,27 @@ inline __device__ void proj_plane(TYPE_T *a, TYPE_T *g)
      * This is equivalent to solving
      *
      *      minimize  0.5*<p,p> - <g,p>
-     *          s.t.  a[0]*p[0] + a[1]*p[1] = p[2].
+     *          s.t.  <(a,-1),p> = 0.
      *
      * The result is stored in g.
      */
 
+    TYPE_T fac, facn;
+    int k;
+
     // fac : <(a,-1),g> / <(a,-1),(a,-1)>
-    TYPE_T fac  = a[0]*g[0] + a[1]*g[1] + (-1)*g[2];
-           fac /= a[0]*a[0] + a[1]*a[1] + (-1)*(-1);
+    fac = compute_Ax(a, g);
+    facn = (-1)*(-1);
+    for (k = 0; k < ndim; k++) {
+        facn += a[k]*a[k];
+    }
+    fac /= facn;
 
     // g -= fac*(a,-1)
-    g[0] -= fac*a[0];
-    g[1] -= fac*a[1];
-    g[2] -= fac*(-1);
+    g[ndim] -= fac*(-1);
+    for (k = 0; k < ndim; k++) {
+        g[k] -= fac*a[k];
+    }
 }
 
 inline __device__ void proj_line(TYPE_T *a0, TYPE_T *a1, TYPE_T *g)
@@ -233,16 +241,16 @@ inline __device__ void base_trafo_2d(TYPE_T *a0, TYPE_T *a1, TYPE_T *g)
      */
 
     TYPE_T diff0 = a0[0] - a1[0];
-    TYPE_T diff1 = a0[1] - a1[1];
+    TYPE_T diff1 = (ndim == 2) ? (a0[1] - a1[1]) : 0.0;
 
-    if (FABS(diff1) > FABS(diff0)) {
-        g[0] = (g[1] + g[2]*a1[1])/diff1;
+    if (ndim == 2 && FABS(diff1) > FABS(diff0)) {
+        g[0] = (g[1] + g[ndim]*a1[1])/diff1;
     } else {
-        g[0] = (g[0] + g[2]*a1[0])/diff0;
+        g[0] = (g[0] + g[ndim]*a1[0])/diff0;
     }
 
-    // make use of -mu[0]-mu[1] = g[2]
-    g[1] = -g[2] - g[0];
+    // make use of -mu[0]-mu[1] = g[ndim]
+    g[1] = -g[ndim] - g[0];
 }
 
 inline __device__ bool solve_2x2(TYPE_T *A, TYPE_T *b)
@@ -308,9 +316,9 @@ inline __device__ int array_index_of(int *array, int array_size, int val) {
     return -1;
 }
 
-inline __device__ int array_argmin(TYPE_T *array, TYPE_T array_size) {
+inline __device__ int array_argmin(TYPE_T *array, int array_size) {
     TYPE_T min = array[0];
-    TYPE_T argmin = 0;
+    int argmin = 0;
     for (int i = 1; i < array_size; i++) {
         if (array[i] < min) {
             min = array[i];
@@ -318,6 +326,15 @@ inline __device__ int array_argmin(TYPE_T *array, TYPE_T array_size) {
         }
     }
     return argmin;
+}
+
+inline __device__ TYPE_T compute_Ax(TYPE_T *A, TYPE_T *x) {
+    TYPE_T Ax = 0.0;
+    Ax = -x[ndim];
+    for (int k = 0; k < ndim; k++) {
+        Ax += A[k]*x[k];
+    }
+    return Ax;
 }
 
 inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T *sol)
@@ -335,20 +352,20 @@ inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T 
      *
      *
      *  Args:
-     *      x : shape (3,)
-     *      A : shape (N,2); the matrix A is actually of shape (N,3), but the
-     *          last column is not stored in memory because it has the constant
-     *          value -1
+     *      x : shape (ndim+1,)
+     *      A : shape (N,ndim); the matrix A is actually of shape (N,ndim+1),
+     *          but the last column is not stored in memory because it has the
+     *          constant value -1
      *      b : shape (N,)
      *      N : number of inequality constraints
-     *      sol : shape (3,), the result is stored in `sol`
+     *      sol : shape (ndim+1,), the result is stored in `sol`
      */
 
     // iteration variables
     int k, l, _iter;
 
     // dir : search direction
-    TYPE_T dir[3];
+    TYPE_T dir[ndim+1];
     TYPE_T step_min, step, Ax, Ad;
 
     // active and working set
@@ -361,15 +378,15 @@ inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T 
     int lambda_argmin;
 
     // initialize with input
-    for (k = 0; k < 3; k++) {
+    for (k = 0; k < ndim+1; k++) {
         sol[k] = x[k];
     }
 
-    // determine initial feasible guess by increasing sol[2] if necessary
+    // determine initial feasible guess by increasing sol[ndim] if necessary
     for (l = 0; l < N; l++) {
-        Ax = A[l][0]*sol[0] + A[l][1]*sol[1] - sol[2];
+        Ax = compute_Ax(A[l], sol);
         if (Ax > b[l]) {
-            sol[2] += Ax - b[l];
+            sol[ndim] += Ax - b[l];
             active_set[0] = l;
             active_set_size = 1;
         }
@@ -382,7 +399,7 @@ inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T 
         blocking = -1;
 
         // explicitely solve equality constrained helper QPs
-        for (k = 0; k < 3; k++) {
+        for (k = 0; k < ndim+1; k++) {
             dir[k] = x[k] - sol[k];
         }
 
@@ -392,7 +409,12 @@ inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T 
             proj_line(A[active_set[0]], A[active_set[1]], dir);
         }
 
-        if (FABS(dir[0]) + FABS(dir[1]) + FABS(dir[2]) > 0) {
+        step = 0.0;
+        for (k = 0; k < ndim+1; k++) {
+            step += FABS(dir[k]);
+        }
+
+        if (step > 0) {
             // determine smallest step size at which a new (blocking)
             // constraint enters the active set
             step_min = 1.0;
@@ -403,8 +425,8 @@ inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T 
                     continue;
                 }
 
-                Ax = A[k][0]*sol[0]   + A[k][1]*sol[1]   - sol[2];
-                Ad = A[k][0]*dir[0] + A[k][1]*dir[1] - dir[2];
+                Ax = compute_Ax(A[k], sol);
+                Ad = compute_Ax(A[k], dir);
 
                 // dir is orthogonal to a0 and a1. However, by the following
                 // check, dir can't be orthogonal to a blocking constraint,
@@ -419,7 +441,7 @@ inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T 
             }
 
             // advance
-            for (k = 0; k < 3; k++) {
+            for (k = 0; k < ndim+1; k++) {
                 sol[k] += step_min*dir[k];
             }
         }
@@ -434,11 +456,11 @@ inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T 
             break;
         }
 
-        if (active_set_size == 3 || blocking == -1) {
+        if (active_set_size == ndim+1 || blocking == -1) {
             // compute Lagrange multipliers lambda
-            lambda[0] = x[0] - sol[0];
-            lambda[1] = x[1] - sol[1];
-            lambda[2] = x[2] - sol[2];
+            for (k = 0; k < ndim+1; k++) {
+                lambda[k] = x[k] - sol[k];
+            }
 
             if (active_set_size == 2) {
                 // No blocking constraint: sol is exact orthogonal projection of
@@ -470,7 +492,7 @@ inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T 
 #if 0
     // check feasibility of result
     for (l = 0; l < N; l++) {
-        Ax = A[l][0]*sol[0] + A[l][1]*sol[1] - sol[2];
+        Ax = compute_Ax(A[l], sol);
         if (Ax - b[l] > 1e-3) {
             printf("Warning: solution is not primal feasible: "
                    "diff=%g.\n", Ax - b[l]);
@@ -498,8 +520,8 @@ __global__ void epigraphproj(TYPE_T *x)
     if (j >= nregions || i >= nfuns) return;
 
     int k, l;
-    TYPE_T result[3];
-    TYPE_T *xji = &x[(j*nfuns + i)*3];
+    TYPE_T result[ndim+1];
+    TYPE_T *xji = &x[(j*nfuns + i)*(ndim+1)];
     TYPE_T *Aij[nsubpoints];
     TYPE_T bij[nsubpoints];
 
@@ -508,14 +530,14 @@ __global__ void epigraphproj(TYPE_T *x)
     for (k = 0; k < nsubpoints; k++) {
         l = J[j*nsubpoints + k];
         if (I[i*npoints + l]) {
-            Aij[Nij] = &A_STORE[l*2];
+            Aij[Nij] = &A_STORE[l*ndim];
             bij[Nij++] = B_STORE[i*npoints + l];
         }
     }
 
     // solve and write result to input array
     solve_qp(xji, Aij, bij, Nij, result);
-    for (k = 0; k < 3; k++) {
+    for (k = 0; k < ndim+1; k++) {
         xji[k] = result[k];
     }
 }

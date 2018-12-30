@@ -111,16 +111,17 @@ class EpigraphFct(Functional):
         Args:
             I : ndarray of bools, shape (nfuns, npoints)
             J : ndarray of ints, shape (nregions, nsubpoints)
-            v : ndarray of floats, shape (npoints, 2)
+            v : ndarray of floats, shape (npoints, ndim)
             b : ndarray of floats, shape (nfuns, npoints)
         """
         Functional.__init__(self)
 
         nfuns, npoints = I.shape
         nregions, nsubpoints = J.shape
+        ndim = v.shape[1]
         self.I, self.J, self.v, self.b = I, J, v, b
 
-        self.x = Variable((nregions, nfuns, 3))
+        self.x = Variable((nregions, nfuns, ndim+1))
 
         if conj is None:
             self.conj = EpigraphSupportFct(I, J, v, b, conj=self)
@@ -157,14 +158,15 @@ class EpigraphSupportFct(Functional):
         Args:
             I : ndarray of bools, shape (nfuns, npoints)
             J : ndarray of ints, shape (nregions, nsubpoints)
-            v : ndarray of floats, shape (npoints, 2)
+            v : ndarray of floats, shape (npoints, ndim)
             b : ndarray of floats, shape (nfuns, npoints)
         """
         Functional.__init__(self)
 
         nfuns, npoints = I.shape
         nregions, nsubpoints = J.shape
-        self.x = Variable((nregions, nfuns, 3))
+        ndim = v.shape[1]
+        self.x = Variable((nregions, nfuns, ndim+1))
         self.A, self.b = epigraph_Ab(I, J, v, b)
 
         # maximize <x,y>  s.t. A y <= b using CVX
@@ -174,8 +176,8 @@ class EpigraphSupportFct(Functional):
         self.cp_prob = cp.Problem(
             cp.Maximize(self.cp_x*self.cp_y),
             [cp.Constant(self.A)*self.cp_y <= cp.Constant(self.b)])
-        self.checks = -np.ones((nregions, 3, 3))
-        self.checks[:,:,0:2] = v[J[:,0:3],:]
+        self.checks = -np.ones((nregions, ndim+1, ndim+1))
+        self.checks[:,:,0:-1] = v[J[:,0:ndim+1],:]
         self.checks[:] = np.linalg.inv(self.checks).transpose(0,2,1)
 
         if conj is None:
@@ -186,9 +188,10 @@ class EpigraphSupportFct(Functional):
     def __call__(self, x, grad=False):
         assert not grad
         x = self.x.vars(x)[0]
-        infeas = np.einsum("jkl,jil->jik", self.checks, x).reshape(-1, 3)
+        ndim_1 = x.shape[-1]
+        infeas = np.einsum("jkl,jil->jik", self.checks, x).reshape(-1, ndim_1)
         infeas = np.amax(np.fmax(0, -infeas), axis=-1)
-        x_masked = x.copy().reshape(-1, 3)
+        x_masked = x.copy().reshape(-1, ndim_1)
         x_masked[infeas > 0] = 0
         self.cp_x.value = x_masked.ravel()
         self.cp_prob.solve(verbose=False, solver="MOSEK")

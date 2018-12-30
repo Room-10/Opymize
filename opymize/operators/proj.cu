@@ -170,6 +170,15 @@ __global__ void quadepiproj(TYPE_T *x)
 #ifdef EPIGRAPH_PROJ
 #include <stdio.h>
 
+inline __device__ TYPE_T compute_Ax(TYPE_T *A, TYPE_T *x) {
+    TYPE_T Ax = 0.0;
+    Ax = -x[ndim];
+    for (int k = 0; k < ndim; k++) {
+        Ax += A[k]*x[k];
+    }
+    return Ax;
+}
+
 inline __device__ void proj_plane(TYPE_T *a, TYPE_T *g)
 {
     /* Compute the normal projection of g onto the subspace which
@@ -326,15 +335,6 @@ inline __device__ int array_argmin(TYPE_T *array, int array_size) {
         }
     }
     return argmin;
-}
-
-inline __device__ TYPE_T compute_Ax(TYPE_T *A, TYPE_T *x) {
-    TYPE_T Ax = 0.0;
-    Ax = -x[ndim];
-    for (int k = 0; k < ndim; k++) {
-        Ax += A[k]*x[k];
-    }
-    return Ax;
 }
 
 inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T *sol)

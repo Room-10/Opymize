@@ -24,7 +24,7 @@ class SplitSum(Functional):
             return (val, infeas), dF
         else:
             val = sum([res[0] for res in results])
-            infeas = sum([res[1] for res in results])
+            infeas = max([res[1] for res in results])
             return (val, infeas)
 
     def prox(self, tau):

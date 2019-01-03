@@ -228,4 +228,4 @@ class EpigraphSupportFct(Functional):
         x[:,-1] = 1.0
         x[xt_mask,:-1] /= xt[xt_mask,None]
         val = [Ab.dot(xij).max() for Ab,xij in zip(self.eqns, x)]
-        return (xt*val).sum(), infeas.sum()
+        return (xt*val).sum(), infeas.max()

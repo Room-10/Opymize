@@ -147,6 +147,10 @@ class EpigraphFct(Functional):
 class EpigraphSupportFct(Functional):
     """ F(x) = max sum_ji <y,x[j,i]>  s.t. y \in epi(f[i]_j*)
 
+    f[i] : piecewise linear function
+    f[i]_j : restriction of f[i] to the simplicial region j
+        The pieces f[i]_j are assumed to be convex.
+
     More precisely:
 
         F(x) = max sum_ji <y,x[j,i]>
@@ -157,9 +161,14 @@ class EpigraphSupportFct(Functional):
         """
         Args:
             I : ndarray of bools, shape (nfuns, npoints)
+                Selection of support points used by each of the f[i].
             J : ndarray of ints, shape (nregions, nsubpoints)
+                Description of the simplicial regions.
             v : ndarray of floats, shape (npoints, ndim)
+                All possible support points of the f[i].
             b : ndarray of floats, shape (nfuns, npoints)
+                Values of the f[i] at the support points. Only values at the
+                support points selected by I are used.
         """
         Functional.__init__(self)
 
@@ -169,13 +178,35 @@ class EpigraphSupportFct(Functional):
         self.x = Variable((nregions, nfuns, ndim+1))
         self.A, self.b = epigraph_Ab(I, J, v, b)
 
-        # maximize <x,y>  s.t. A y <= b using CVX
-        import cvxpy as cp
-        self.cp_x = cp.Parameter(self.x.size)
-        self.cp_y = cp.Variable(self.x.size)
-        self.cp_prob = cp.Problem(
-            cp.Maximize(self.cp_x*self.cp_y),
-            [cp.Constant(self.A)*self.cp_y <= cp.Constant(self.b)])
+        # Each f[i] is known by its values on support points v.
+        # The following code computes the equations of the affine functions
+        # that describe each f[i]_j by taking advantage of convexity.
+        from scipy.spatial import ConvexHull
+        self.eqns = []
+        for j in range(nregions):
+            for i in range(nfuns):
+                base = I[i,J[j]]
+                vals = b[i,J[j]][base]
+
+                # points : vertices in the graph of f[i]_j
+                points = np.zeros((vals.size, ndim+1))
+                points[:,:-1] = v[J[j]][base]
+                points[:,-1] = vals
+
+                if points.shape[0] == ndim+1:
+                    # f[i]_j is given by exactly one affine function
+                    Ab = points[1:] - points[:1]
+                    Ab = np.linalg.solve(Ab[:,:-1], Ab[:,-1])
+                    Ab = np.hstack((Ab, points[0,-1] - Ab.dot(points[0,:-1])))
+                    Ab = Ab.reshape(1,-1)
+                else:
+                    # f[i]_j is the pointwise maximum over affine functions
+                    eqns = ConvexHull(points).equations
+                    eqns = eqns[eqns[:,-2] < -1e-5]
+                    Ab = np.zeros((eqns.shape[0],ndim+1))
+                    Ab[:,:-1] = -eqns[:,:-2]/eqns[:,-2:-1]
+                    Ab[:,-1] = -eqns[:,-1]/eqns[:,-2]
+                self.eqns.append(Ab)
         self.checks = -np.ones((nregions, ndim+1, ndim+1))
         self.checks[:,:,0:-1] = v[J[:,0:ndim+1],:]
         self.checks[:] = np.linalg.inv(self.checks).transpose(0,2,1)
@@ -191,10 +222,10 @@ class EpigraphSupportFct(Functional):
         ndim_1 = x.shape[-1]
         infeas = np.einsum("jkl,jil->jik", self.checks, x).reshape(-1, ndim_1)
         infeas = np.amax(np.fmax(0, -infeas), axis=-1)
-        x_masked = x.copy().reshape(-1, ndim_1)
-        x_masked[infeas > 0] = 0
-        self.cp_x.value = x_masked.ravel()
-        self.cp_prob.solve(verbose=False, solver="MOSEK")
-        if self.cp_prob.status != "optimal":
-            print("EpigraphSupportFct: problem %s" % self.cp_prob.status)
-        return self.cp_prob.value, infeas.sum()
+        xt = np.abs(x[:,:,-1]).ravel()
+        xt_mask = (xt != 0)
+        x = x.copy().reshape(-1,ndim_1)
+        x[:,-1] = 1.0
+        x[xt_mask,:-1] /= xt[xt_mask,None]
+        val = [Ab.dot(xij).max() for Ab,xij in zip(self.eqns, x)]
+        return (xt*val).sum(), infeas.sum()

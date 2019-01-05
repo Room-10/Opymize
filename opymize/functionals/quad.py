@@ -70,7 +70,10 @@ class QuadSupport(Functional):
         x = self.x.vars(x)[0]
         msk = x[:,-1] < 0
         val = -0.5*self.lbd*((x[:,0:-1]**2).sum(axis=1)[msk]/x[msk,-1]).sum()
-        infeas = np.linalg.norm(x[np.logical_not(msk),-1], ord=np.inf)
+        if np.all(msk):
+            infeas = 0
+        else:
+            infeas = np.linalg.norm(x[np.logical_not(msk),-1], ord=np.inf)
         return (val, infeas)
 
 class QuadEpiInd(Functional):

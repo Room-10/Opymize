@@ -222,10 +222,9 @@ class EpigraphSupportFct(Functional):
         ndim_1 = x.shape[-1]
         infeas = np.einsum("jkl,jil->jik", self.checks, x).reshape(-1, ndim_1)
         infeas = np.amax(np.fmax(0, -infeas), axis=-1)
-        xt = np.abs(x[:,:,-1]).ravel()
-        xt_mask = (xt != 0)
+        xt = np.fmax(np.spacing(1), np.abs(x[:,:,-1]).ravel())
         x = x.copy().reshape(-1,ndim_1)
         x[:,-1] = 1.0
-        x[xt_mask,:-1] /= xt[xt_mask,None]
+        x[:,:-1] /= xt[:,None]
         val = [Ab.dot(xij).max() for Ab,xij in zip(self.eqns, x)]
         return (xt*val).sum(), infeas.max()

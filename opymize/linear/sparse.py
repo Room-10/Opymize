@@ -229,11 +229,16 @@ def avgopn(dims):
             shape of the image domain
     """
     dims = np.array(dims)
+    npoints = np.prod(dims)
+    ndim = dims.size
+
+    if ndim == 1:
+        return sp.eye(npoints*ndim)
 
     avgs = []
-    for t in range(dims.size):
+    for t in range(ndim):
         avg_t = 0
-        for ti in range(dims.size):
+        for ti in range(ndim):
             if t == ti:
                 continue
             diags = np.ones((2, dims[ti]))

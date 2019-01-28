@@ -157,11 +157,13 @@ class EpigraphSupportFct(Functional):
                s.t. <v[k],y[:-1]> - b[i,k] <= y[-1]
                     for any i,j,k with I[i,J[j]][k] == True
     """
-    def __init__(self, I, J, v, b, conj=None):
+    def __init__(self, I, If, J, v, b, conj=None):
         """
         Args:
             I : ndarray of bools, shape (nfuns, npoints)
                 Selection of support points used by each of the f[i].
+            If : nfuns lists of nregions arrays, shape (nfaces,ndim+1) each
+                Indices of faces forming the graph of each of the f[i]_j.
             J : ndarray of ints, shape (nregions, nsubpoints)
                 Description of the simplicial regions.
             v : ndarray of floats, shape (npoints, ndim)
@@ -180,32 +182,18 @@ class EpigraphSupportFct(Functional):
 
         # Each f[i] is known by its values on support points v.
         # The following code computes the equations of the affine functions
-        # that describe each f[i]_j by taking advantage of convexity.
-        from scipy.spatial import ConvexHull
+        # that describe each f[i]_j.
         self.eqns = []
         for j in range(nregions):
             for i in range(nfuns):
-                base = I[i,J[j]]
-                vals = b[i,J[j]][base]
-
-                # points : vertices in the graph of f[i]_j
-                points = np.zeros((vals.size, ndim+1))
-                points[:,:-1] = v[J[j]][base]
-                points[:,-1] = vals
-
-                if points.shape[0] == ndim+1:
-                    # f[i]_j is given by exactly one affine function
-                    Ab = points[1:] - points[:1]
-                    Ab = np.linalg.solve(Ab[:,:-1], Ab[:,-1])
-                    Ab = np.hstack((Ab, points[0,-1] - Ab.dot(points[0,:-1])))
-                    Ab = Ab.reshape(1,-1)
-                else:
-                    # f[i]_j is the pointwise maximum over affine functions
-                    eqns = ConvexHull(points).equations
-                    eqns = eqns[eqns[:,-2] < -1e-5]
-                    Ab = np.zeros((eqns.shape[0],ndim+1))
-                    Ab[:,:-1] = -eqns[:,:-2]/eqns[:,-2:-1]
-                    Ab[:,-1] = -eqns[:,-1]/eqns[:,-2]
+                faces = If[i][j]
+                points = v[J[j]][faces]
+                vals = b[i,J[j]][faces]
+                ptmats = points[:,1:] - points[:,:1]
+                valbs = vals[:,1:] - vals[:,:1]
+                Ab = np.zeros((faces.shape[0],ndim+1))
+                Ab[:,:-1] = np.linalg.solve(ptmats, valbs)
+                Ab[:,-1] = vals[:,0] - (Ab[:,:-1]*points[:,0,:]).sum(axis=-1)
                 self.eqns.append(Ab)
         self.checks = -np.ones((nregions, ndim+1, ndim+1))
         self.checks[:,:,0:-1] = v[J[:,0:ndim+1],:]

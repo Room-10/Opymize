@@ -68,8 +68,8 @@ class QuadSupport(Functional):
     def __call__(self, x, grad=False):
         assert not grad
         x = self.x.vars(x)[0]
-        msk = x[:,-1] < 0
-        val = -0.5*self.lbd*((x[:,0:-1]**2).sum(axis=1)[msk]/x[msk,-1]).sum()
+        msk = x[:,-1] < -1e-8
+        val = -0.5*self.lbd*((x[msk,0:-1]**2).sum(axis=1)/x[msk,-1]).sum()
         if np.all(msk):
             infeas = 0
         else:

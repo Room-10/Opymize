@@ -110,6 +110,11 @@ __global__ void l1normsproj(TYPE_T *x)
 #ifdef QUAD_EPI_PROJ
 inline __device__ TYPE_T solve_reduced_monic_cubic(TYPE_T a, TYPE_T b)
 {
+    /* Solve x**3 + a*x + b = 0 using explicit formulas.
+     *
+     * Only real solutions are computed and in case more than one real
+     * solution exists, only one of them is returned.
+     **/
     if (a == 0.0) {
         return (b == 0.0) ? 0.0 : CBRT(-b);
     } else if (b == 0.0 && a > 0.0) {
@@ -135,6 +140,18 @@ inline __device__ TYPE_T solve_reduced_monic_cubic(TYPE_T a, TYPE_T b)
 
 __global__ void quadepiproj(TYPE_T *x)
 {
+    /* Project (x1,x2) onto the epigraph of a paraboloid 0.5/lbd*|x1|^2 \leq x2.
+     *
+     * Note that the multi-dimensional case can be reduced to the scalar case
+     * by radial symmetry.
+     *
+     * The projection (y1,y2) satisfies the orthogonality condition
+     *
+     *      (|x1| - |y1|) + (x2 - 0.5/lbd*|y1|^2)*|y1|/lbd = 0,
+     *
+     * which is a reduced monic cubic equation in |y1|.
+     **/
+
     // global thread index
     int i = blockIdx.x*blockDim.x + threadIdx.x;
 

@@ -275,6 +275,7 @@ class PDHG(object):
         if use_gpu: self.prepare_gpu(type_t=precision)
 
         logging.info("Solving (steps<%d)..." % term_maxiter)
+        self.log_header(pd_res_mode)
 
         with GracefulInterruptHandler() as interrupt_hdl:
             _iter = 0
@@ -286,43 +287,53 @@ class PDHG(object):
                 if interrupt_hdl.interrupted or check_step:
                     if interrupt_hdl.interrupted:
                         print("Interrupt (SIGINT) at iter=%d" % _iter)
+                    self.info['iter'] = _iter
 
                     if use_gpu:
                         for n in self.gpu_itervars.keys():
                             self.gpu_itervars[n].get(ary=i[n])
 
                     if pd_res_mode:
-                        logging.info("#{:6d}: res_p = {: 9.6g} ({: 9.6g}), " \
-                            "res_d = {: 9.6g} ({: 9.6g})".format(
-                            _iter, self.info['resp'], self.info['epsp'],
-                            self.info['resd'], self.info['epsd']
-                        ))
                         test_p = self.info['resp'] < self.info['epsp']
                         test_d = self.info['resd'] < self.info['epsd']
                         test_term = test_p and test_d
                     else:
                         self.info.update(self.pd_gap())
-                        logging.info("#{:6d}: objp = {: 9.6g} ({: 9.6g}), " \
-                            "objd = {: 9.6g} ({: 9.6g}), " \
-                            "gap = {: 9.6g}, " \
-                            "relgap = {: 9.6g}".format(
-                            _iter, self.info['objp'], self.info['infeasp'],
-                            self.info['objd'], self.info['infeasd'],
-                            self.info['gap'], self.info['relgap']
-                        ))
                         test_err = np.abs(self.info['relgap']) < term_pd_gap[0]
                         infeasp, infeasd = self.info['infeasp'], self.info['infeasd']
                         test_infeas = max(infeasp, infeasd) < term_pd_gap[1]
                         test_term = test_err and test_infeas
 
+                    self.log_iter(pd_res_mode)
+
                     if cbfun is not None:
-                        cbfun(_iter, self.state, self.info)
+                        cbfun(self.state, self.info)
 
                     if test_term or interrupt_hdl.interrupted:
                         break
 
-        self.info['iter'] = _iter
         return self.info
+
+    def log_header(self, pd_res_mode):
+        if pd_res_mode:
+            logging.info("#{:>7s}: {:>13s} ({:>9s}) {:>13s} ({:>9s})".format(
+                "iter", "primal resid.", "tolerance", "dual resid.", "tolerance"))
+        else:
+            logging.info("#{:>7s}: {:>9s} ({:>8s}) {:>9s} ({:>8s}) " \
+                "{:>9s} ({:>9s})".format(
+                "iter", "primal", "infeas", "dual", "infeas",
+                "pd-gap", "relative"))
+
+    def log_iter(self, pd_res_mode):
+        i = self.info
+        if pd_res_mode:
+            logging.info("#{:7d}: {:13.4g} ({:9.3e}) {:13.4g} ({:9.3e})".format(
+                i['iter'], i['resp'], i['epsp'], i['resd'], i['epsd']))
+        else:
+            logging.info("#{:7d}: {:9.4g} ({:8.2e}) {:9.4g} ({:8.2e}) " \
+                "{:9.3g} ({:9.2e})".format(
+                i['iter'], i['objp'], i['infeasp'], i['objd'], i['infeasd'],
+                i['gap'], i['relgap']))
 
     @property
     def state(self):

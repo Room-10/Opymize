@@ -285,7 +285,7 @@ def block_diag_csr(blocks):
     indptr = np.r_[[0], np.cumsum(np.repeat(widths, heights))]
     indices = np.r_[[0], np.cumsum(widths[:-1])]
     indices = map(np.add, indices, map(np.arange, widths))
-    indices = np.hstack(map(np.tile, indices, heights))
+    indices = np.hstack(list(map(np.tile, indices, heights)))
     data = np.hstack([B.ravel() for B in blocks])
     return sp.csr_matrix((data, indices, indptr))
 

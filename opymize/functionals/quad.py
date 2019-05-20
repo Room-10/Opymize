@@ -56,20 +56,25 @@ class SSD(Functional):
         return self._prox
 
 class QuadSupport(Functional):
-    """ \sum_i 0.5*lbd*|x[i,0:-1]|^2/|x[i,-1]| if x[i,-1] < 0
+    """ \sum_i 0.5*lbd*|x[i,-1]|*|x[i,:-1]/x[i,-1] + b[i]|^2 if x[i,-1] < 0
         and inf if x[i,-1] >= 0
     """
-    def __init__(self, N, M, lbd, conj=None):
+    def __init__(self, N, M, lbd, shift=None, conj=None):
         Functional.__init__(self)
         self.x = Variable((N, M + 1))
         self.lbd = lbd
-        self.conj = QuadEpiInd(N, M, lbd, conj=self) if conj is None else conj
+        self.shift = np.zeros((N, M)) if shift is None else shift
+        if conj is None:
+            self.conj = QuadEpiInd(N, M, lbd, shift=shift, conj=self)
+        else:
+            self.conj = conj
 
     def __call__(self, x, grad=False):
         assert not grad
         x = self.x.vars(x)[0]
         msk = x[:,-1] < -1e-8
-        val = -0.5*self.lbd*((x[msk,0:-1]**2).sum(axis=1)/x[msk,-1]).sum()
+        val = ((x[msk,:-1]/x[msk,-1:] + self.shift[msk])**2).sum(axis=1)
+        val = (-0.5*self.lbd*x[msk,-1]*val).sum()
         if np.all(msk):
             infeas = 0
         else:
@@ -77,18 +82,22 @@ class QuadSupport(Functional):
         return (val, infeas)
 
 class QuadEpiInd(Functional):
-    """ \sum_i \delta_{0.5*|x[i,0:-1]|^2 \leq lbd*x[i,-1]} """
-    def __init__(self, N, M, lbd, conj=None):
+    """ \sum_i \delta_{0.5*|x[i,:-1] - b[i]|^2 \leq lbd*x[i,-1]} """
+    def __init__(self, N, M, lbd, shift=None, conj=None):
         Functional.__init__(self)
         self.x = Variable((N, M + 1))
         self.lbd = lbd
-        self.conj = QuadSupport(N, M, lbd, conj=self) if conj is None else conj
-        self._prox = QuadEpiProj(N, M, lbd)
+        self.shift = np.zeros((N, M)) if shift is None else shift
+        if conj is None:
+            self.conj = QuadSupport(N, M, lbd, shift=shift, conj=self)
+        else:
+            self.conj = conj
+        self._prox = QuadEpiProj(N, M, lbd, shift=shift)
 
     def __call__(self, x, grad=False):
         assert not grad
         x = self.x.vars(x)[0]
-        dif = 0.5*(x[:,0:-1]**2).sum(axis=1) - self.lbd*x[:,-1]
+        dif = 0.5*((x[:,:-1] - self.shift)**2).sum(axis=1) - self.lbd*x[:,-1]
         val = 0
         infeas = np.linalg.norm(np.fmax(0, dif), ord=np.inf)
         result = (val, infeas)

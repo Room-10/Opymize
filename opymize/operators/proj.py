@@ -276,22 +276,24 @@ class L12ProjJacobian(LinOp):
             y += yy
 
 class QuadEpiProj(Operator):
-    """ T(z)[i] = proj[epi(f*)](z[i])  where  f(x) = 0.5*lbd*|x|**2
+    """ T(z)[i] = proj[epi(f*)](z[i])  where  f(x) = 0.5*lbd*|x - b|**2
 
-    Orthogonal projections onto a paraboloid which requires root finding for
-    cubic polynomials.
+    Orthogonal projections onto a (shifted) paraboloid which requires root
+    finding for cubic polynomials.
     """
-    def __init__(self, N, M, lbd):
+    def __init__(self, N, M, lbd, shift=None):
         Operator.__init__(self)
         self.N, self.M = N, M
         self.x = Variable((self.N, self.M + 1))
         self.y = self.x
         self.lbd = lbd
+        self.shift = np.zeros((self.N, self.M)) if shift is None else shift
 
     def prepare_gpu(self, type_t="double"):
         constvars = {
             'QUAD_EPI_PROJ': 1,
             'lbd': self.lbd,
+            'shift': self.shift,
             'N': self.N, 'M': self.M,
             'TYPE_T': type_t,
         }
@@ -318,7 +320,8 @@ class QuadEpiProj(Operator):
             y[:] = x
         x = self.x.vars(x)[0]
         y = self.y.vars(y)[0]
-        xnorms = np.linalg.norm(x[:,0:-1], ord=2, axis=1)
+        x[:,:-1] -= self.shift
+        xnorms = np.linalg.norm(x[:,:-1], ord=2, axis=1)
         msk = np.logical_and(xnorms == 0.0, 0.0 > x[:,-1])
         y[msk,-1] = 0.0
         msk = np.logical_and(xnorms > 0 , 0.5/self.lbd*xnorms**2 > x[:,-1])
@@ -328,6 +331,7 @@ class QuadEpiProj(Operator):
         ynorms = solve_reduced_monic_cubic(a, b)
         y[msk,0:-1] *= (ynorms/xnorms[msk])[:,None]
         y[msk,-1] = 0.5/self.lbd*ynorms**2
+        y[:,:-1] += self.shift
 
 def epigraph_Ab(I, J, v, b):
     nfuns, npoints = I.shape

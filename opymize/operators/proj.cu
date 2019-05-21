@@ -140,14 +140,16 @@ inline __device__ TYPE_T solve_reduced_monic_cubic(TYPE_T a, TYPE_T b)
 
 __global__ void quadepiproj(TYPE_T *x)
 {
-    /* Project (x1,x2) onto the epigraph of a paraboloid 0.5/lbd*|x1 - b|^2 \leq x2.
+    /* Project (x1,x2) onto the epigraph of a paraboloid f(x1) \leq x2.
+     *
+     *      f(x) := 0.5*a*|x|^2 + <b,x> + c
      *
      * Note that the multi-dimensional case can be reduced to the scalar case
      * by radial symmetry.
      *
-     * The projection (y1,y2) satisfies the orthogonality condition
+     * After translation, the projection (y1,y2) satisfies the orth. condition
      *
-     *      (|x1| - |y1|) + (x2 - 0.5/lbd*|y1|^2)*|y1|/lbd = 0,
+     *      (|x1| - |y1|) + (x2 - 0.5*a*|y1|^2)*(a*|y1|) = 0,
      *
      * which is a reduced monic cubic equation in |y1|.
      *
@@ -167,8 +169,8 @@ __global__ void quadepiproj(TYPE_T *x)
     TYPE_T x1norm, y1norm, l2;
     TYPE_T x1norm_sq = 0.0;
 
-    for (mm = 0; mm < M; mm++) {
-        x1[mm] -= shift[i*M + mm];
+    for (mm = 0; mm < M+1; mm++) {
+        x[i*(M+1) + mm] -= shift[i*(M+1) + mm];
     }
 
     for (mm = 0; mm < M; mm++) {
@@ -177,19 +179,19 @@ __global__ void quadepiproj(TYPE_T *x)
 
     if (x1norm_sq == 0.0 && 0.0 > x2[0]) {
         x2[0] = 0.0;
-    } else if (0.5/lbd*x1norm_sq > x2[0]) {
+    } else if (0.5*lbd*x1norm_sq > x2[0]) {
         x1norm = SQRT(x1norm_sq);
-        l2 = 2.0*(lbd*lbd);
-        y1norm = solve_reduced_monic_cubic(l2*(1 - x2[0]/lbd), -l2*x1norm);
+        l2 = 2.0/(lbd*lbd);
+        y1norm = solve_reduced_monic_cubic(l2*(1 - x2[0]*lbd), -l2*x1norm);
         x1norm = y1norm/x1norm;
         for (mm = 0; mm < M; mm++) {
             x1[mm] *= x1norm;
         }
-        x2[0] = 0.5/lbd*y1norm*y1norm;
+        x2[0] = 0.5*lbd*y1norm*y1norm;
     }
 
-    for (mm = 0; mm < M; mm++) {
-        x1[mm] += shift[i*M + mm];
+    for (mm = 0; mm < M+1; mm++) {
+        x[i*(M+1) + mm] += shift[i*(M+1) + mm];
     }
 }
 #endif

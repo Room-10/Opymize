@@ -276,23 +276,30 @@ class L12ProjJacobian(LinOp):
             y += yy
 
 class QuadEpiProj(Operator):
-    """ T(z)[i] = proj[epi(f*)](z[i])  where  f(x) = 0.5*lbd*|x - b|**2
+    """ T(z)[i] = proj[epi(f_i)](z[i])
 
-    Orthogonal projections onto a (shifted) paraboloid which requires root
+        f_i(x) := 0.5*a*|x|^2 + <b[i],x> + c[i]
+                = 0.5*a*|x + b[i]/a|^2 - (0.5/a*|b[i]|^2 - c[i])
+
+    Orthogonal projections onto a (translated) paraboloid which requires root
     finding for cubic polynomials.
     """
-    def __init__(self, N, M, lbd, shift=None):
+    def __init__(self, N, M, a=1.0, b=None, c=None):
         Operator.__init__(self)
         self.N, self.M = N, M
         self.x = Variable((self.N, self.M + 1))
         self.y = self.x
-        self.lbd = lbd
-        self.shift = np.zeros((self.N, self.M)) if shift is None else shift
+        self.a = a
+        self.b = np.zeros((N, M)) if b is None else b
+        self.c = np.zeros((N,)) if c is None else c
+        self.shift = np.zeros((N, M+1))
+        self.shift[:,:-1] = -self.b/self.a
+        self.shift[:,-1] = -(0.5/a*(self.b**2).sum(axis=-1) - self.c)
 
     def prepare_gpu(self, type_t="double"):
         constvars = {
             'QUAD_EPI_PROJ': 1,
-            'lbd': self.lbd,
+            'lbd': self.a,
             'shift': self.shift,
             'N': self.N, 'M': self.M,
             'TYPE_T': type_t,
@@ -320,18 +327,18 @@ class QuadEpiProj(Operator):
             y[:] = x
         x = self.x.vars(x)[0]
         y = self.y.vars(y)[0]
-        x[:,:-1] -= self.shift
-        xnorms = np.linalg.norm(x[:,:-1], ord=2, axis=1)
-        msk = np.logical_and(xnorms == 0.0, 0.0 > x[:,-1])
+        y -= self.shift
+        xnorms = np.linalg.norm(y[:,:-1], ord=2, axis=1)
+        msk = np.logical_and(xnorms == 0.0, 0.0 > y[:,-1])
         y[msk,-1] = 0.0
-        msk = np.logical_and(xnorms > 0 , 0.5/self.lbd*xnorms**2 > x[:,-1])
-        lbd_2 = 2.0*self.lbd**2
-        a = lbd_2*(1 - x[msk,-1]/self.lbd)
-        b = -lbd_2*xnorms[msk]
+        msk = np.logical_and(xnorms > 0, 0.5*self.a*xnorms**2 > y[:,-1])
+        a_2 = 2.0/self.a**2
+        a = a_2*(1 - y[msk,-1]*self.a)
+        b = -a_2*xnorms[msk]
         ynorms = solve_reduced_monic_cubic(a, b)
-        y[msk,0:-1] *= (ynorms/xnorms[msk])[:,None]
-        y[msk,-1] = 0.5/self.lbd*ynorms**2
-        y[:,:-1] += self.shift
+        y[msk,:-1] *= (ynorms/xnorms[msk])[:,None]
+        y[msk,-1] = 0.5*self.a*ynorms**2
+        y += self.shift
 
 def epigraph_Ab(I, J, v, b):
     nfuns, npoints = I.shape

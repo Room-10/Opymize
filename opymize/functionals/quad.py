@@ -56,25 +56,29 @@ class SSD(Functional):
         return self._prox
 
 class QuadSupport(Functional):
-    """ \sum_i 0.5*lbd*|x[i,-1]|*|x[i,:-1]/x[i,-1] + b[i]|^2 if x[i,-1] < 0
+    """ \sum_i -x[i,-1]*f_i(-x[i,:-1]/x[i,-1]) if x[i,-1] < 0
         and inf if x[i,-1] >= 0
+
+        f_i(x) := 0.5*a*|x|^2 + <b[i],x> + c[i]
     """
-    def __init__(self, N, M, lbd, shift=None, conj=None):
+    def __init__(self, N, M, a=1.0, b=None, c=None, conj=None):
         Functional.__init__(self)
         self.x = Variable((N, M + 1))
-        self.lbd = lbd
-        self.shift = np.zeros((N, M)) if shift is None else shift
+        self.a = a
+        self.b = np.zeros((N, M)) if b is None else b
+        self.c = np.zeros((N,)) if c is None else c
         if conj is None:
-            self.conj = QuadEpiInd(N, M, lbd, shift=shift, conj=self)
+            self.conj = QuadEpiInd(N, M, a=a, b=b, c=c, conj=self)
         else:
             self.conj = conj
 
     def __call__(self, x, grad=False):
         assert not grad
+        a, b, c = self.a, self.b, self.c
         x = self.x.vars(x)[0]
         msk = x[:,-1] < -1e-8
-        val = ((x[msk,:-1]/x[msk,-1:] + self.shift[msk])**2).sum(axis=1)
-        val = (-0.5*self.lbd*x[msk,-1]*val).sum()
+        x1, x2 = x[msk,:-1], x[msk,-1]
+        val = (-0.5*a*x1**2/x2[:,None] + b*x1).sum(axis=1) - x2*c[msk]
         if np.all(msk):
             infeas = 0
         else:
@@ -82,22 +86,26 @@ class QuadSupport(Functional):
         return (val, infeas)
 
 class QuadEpiInd(Functional):
-    """ \sum_i \delta_{0.5*|x[i,:-1] - b[i]|^2 \leq lbd*x[i,-1]} """
-    def __init__(self, N, M, lbd, shift=None, conj=None):
+    """ \sum_i \delta_{f_i(x[i,:-1]) \leq x[i,-1]}
+        f_i(x) := 0.5*a*|x|^2 + <b[i],x> + c[i]
+     """
+    def __init__(self, N, M, a=1.0, b=None, c=None, conj=None):
         Functional.__init__(self)
         self.x = Variable((N, M + 1))
-        self.lbd = lbd
-        self.shift = np.zeros((N, M)) if shift is None else shift
+        self.a = a
+        self.b = np.zeros((N, M)) if b is None else b
+        self.c = np.zeros((N,)) if c is None else c
         if conj is None:
-            self.conj = QuadSupport(N, M, lbd, shift=shift, conj=self)
+            self.conj = QuadSupport(N, M, a=a, b=b, c=c, conj=self)
         else:
             self.conj = conj
-        self._prox = QuadEpiProj(N, M, lbd, shift=shift)
+        self._prox = QuadEpiProj(N, M, a=a, b=b, c=c)
 
     def __call__(self, x, grad=False):
         assert not grad
         x = self.x.vars(x)[0]
-        dif = 0.5*((x[:,:-1] - self.shift)**2).sum(axis=1) - self.lbd*x[:,-1]
+        fx = (0.5*self.a*x[:,:-1]**2 + self.b*x[:,:-1]).sum(axis=1) + self.c
+        dif = fx - x[:,-1]
         val = 0
         infeas = np.linalg.norm(np.fmax(0, dif), ord=np.inf)
         result = (val, infeas)

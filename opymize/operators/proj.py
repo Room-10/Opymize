@@ -286,6 +286,7 @@ class QuadEpiProj(Operator):
     """
     def __init__(self, N, M, a=1.0, b=None, c=None):
         Operator.__init__(self)
+        assert a > 0
         self.N, self.M = N, M
         self.x = Variable((self.N, self.M + 1))
         self.y = self.x

@@ -13,7 +13,7 @@ for i in range(10):
     b = -5.0 + 10*np.random.rand(N, M)
     c = -5.0 + 10*np.random.rand(N,)
     f = lambda _x: (0.5*a*_x**2 + b*_x).sum(axis=1) + c
-    op = QuadEpiProj(N, M, a=a, b=b, c=c)
+    op = QuadEpiProj(N, M, alph=a, b=b, c=c)
     test_gpu_op(op)
 
     x = op.x.new().reshape(N, -1)

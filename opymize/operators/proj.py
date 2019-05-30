@@ -319,6 +319,7 @@ class QuadEpiProj(Operator):
             constvars['lbd'] = self.lbd
         if self.shift is not None:
             constvars['shift'] = self.shift
+            constvars['USE_SHIFT'] = 1
         for f in ['sqrt','cbrt','acos','cos','fabs']:
             constvars[f.upper()] = f if type_t == "double" else (f+"f")
         files = [resource_stream('opymize.operators', 'proj.cu')]

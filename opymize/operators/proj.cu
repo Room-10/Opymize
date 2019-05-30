@@ -171,7 +171,7 @@ __global__ void quadepiproj(TYPE_T *x)
     TYPE_T x1norm, y1norm, l;
     TYPE_T x1norm_sq = 0.0;
 
-#ifdef shift
+#ifdef USE_SHIFT
     for (mm = 0; mm < M+1; mm++) {
         x[i*(M+1) + mm] -= shift[i*(M+1) + mm];
     }
@@ -211,7 +211,7 @@ __global__ void quadepiproj(TYPE_T *x)
         x2[0] = 0.0;
     }
 
-#ifdef shift
+#ifdef USE_SHIFT
     for (mm = 0; mm < M+1; mm++) {
         x[i*(M+1) + mm] += shift[i*(M+1) + mm];
     }

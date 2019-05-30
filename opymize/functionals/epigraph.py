@@ -161,7 +161,7 @@ class QuadEpiSupp(Functional):
         if np.all(msk):
             infeas = 0
         else:
-            infeas = np.linalg.norm(x[np.logical_not(msk),-1], ord=np.inf)
+            infeas = np.linalg.norm(x[~msk,-1], ord=np.inf)
         return (val, infeas)
 QuadSupport = QuadEpiSupp
 
@@ -227,13 +227,13 @@ class HuberPerspective(Functional):
         x1, x2 = x[msk,:-1], -x[msk,-1]
         xnorm = np.linalg.norm(x1/x2[:,None], axis=-1)
         qmsk = xnorm <= alph
-        qmsk_n = np.logical_not(qmsk)
+        qmsk_n = ~qmsk
         val = (x2[qmsk]*lbd*0.5/alph*xnorm[qmsk]**2).sum()
         val += (x2[qmsk_n]*lbd*(xnorm[qmsk_n] - alph/2)).sum()
         if np.all(msk):
             infeas = 0
         else:
-            infeas = np.linalg.norm(x[np.logical_not(msk),-1], ord=np.inf)
+            infeas = np.linalg.norm(x[~msk,-1], ord=np.inf)
         return (val, infeas)
 
 class TruncQuadEpiInd(Functional):

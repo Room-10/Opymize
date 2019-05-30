@@ -56,7 +56,7 @@ class L1Norms(Functional):
             """ dF = 0 if x == 0 else x/|x| """
             dF = x.copy()
             where0 = (self._xnorms == 0)
-            wheren0 = np.logical_not(where0)
+            wheren0 = ~where0
             dF[where0,:,:] = 0
             dF[wheren0,:,:] /= self._xnorms[wheren0]
             result = result, dF.ravel()

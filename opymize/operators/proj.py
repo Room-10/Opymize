@@ -242,7 +242,7 @@ class L12ProjJacobian(LinOp):
 
     def update(self, xbar, exterior, xnorms):
         self.extind[:] = exterior
-        self.intind[:] = np.logical_not(exterior)
+        self.intind[:] = ~self.extind
 
         self.xbar_normed[:] = xbar.reshape(self.xbar_normed.shape)
         self.xbar_normed[exterior,:] *= xnorms[exterior,None]
@@ -346,25 +346,21 @@ class QuadEpiProj(Operator):
         if shift is not None: y -= shift
         xnorms = np.linalg.norm(y[:,:-1], ord=2, axis=1)
         msk_c0 = xnorms == 0
-        msk_c0n = np.logical_not(msk_c0)
 
         if lbd < np.inf:
             msk_c1 = -lbd/alph*xnorms + lbd*(lbd/alph + alph/2) > y[:,-1]
-            msk_c1n = np.logical_not(msk_c1)
             msk_c2 = alph*lbd/2 > y[:,-1]
-            msk_c2n = np.logical_not(msk_c2)
 
-            msk = np.logical_and(xnorms > lbd, msk_c2n)
+            msk = (xnorms > lbd) & (~msk_c2)
             y[msk,:-1] *= lbd/xnorms[msk,None]
 
-            msk = np.logical_and(msk_c2, msk_c1n)
+            msk = msk_c2 & (~msk_c1)
             y[msk,:-1] *= lbd/xnorms[msk,None]
             y[msk,-1] = alph*lbd/2
         else:
             msk_c1 = np.ones(y.shape[:-1], dtype=bool)
 
-        msk = np.logical_and(msk_c1, msk_c0n)
-        msk = np.logical_and(msk, 0.5*alph*xnorms**2 > y[:,-1])
+        msk = msk_c1 & (~msk_c0) & (0.5*alph*xnorms**2 > y[:,-1])
         a_2 = 2.0/alph**2
         a = a_2*(1 - y[msk,-1]*alph)
         b = -a_2*xnorms[msk]
@@ -372,8 +368,7 @@ class QuadEpiProj(Operator):
         y[msk,:-1] *= (ynorms/xnorms[msk])[:,None]
         y[msk,-1] = 0.5*alph*ynorms**2
 
-        msk = np.logical_and(msk_c0, y[:,-1] < 0)
-        y[msk,-1] = 0.0
+        y[msk_c0 & (y[:,-1] < 0),-1] = 0.0
 
         if shift is not None: y += shift
 

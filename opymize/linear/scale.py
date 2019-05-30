@@ -100,14 +100,14 @@ class NihilOp(LinOp):
         self.x = Variable(N)
         self.y = Variable(N)
         self.adjoint = self
-        self.keep = keep
+        self.keep = keep.astype(bool)
 
     def _call_cpu(self, x, y=None, add=False):
         y = x if y is None else y
         if add:
             y[self.keep] += x[self.keep]
         else:
-            y[np.logical_not(self.keep)] = 0.0
+            y[~self.keep] = 0.0
             y[self.keep] = x[self.keep]
 
     def rowwise_lp(self, y, p=1, add=False):

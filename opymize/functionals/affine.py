@@ -60,8 +60,8 @@ class MaskedAffineFct(Functional):
     def __init__(self, mask, c, conj=None):
         Functional.__init__(self)
         self.x = Variable(c.shape)
-        self.mask = mask
-        self.nmask = np.logical_not(mask)
+        self.mask = mask.astype(bool)
+        self.nmask = ~self.mask
         self.c = c
         if conj is None:
             from opymize.functionals import MaskedIndicatorFct

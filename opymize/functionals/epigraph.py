@@ -229,7 +229,7 @@ class HuberPerspective(Functional):
         qmsk = xnorm <= alpha
         qmsk_n = np.logical_not(qmsk)
         val = (x2[qmsk]*lbd*0.5/alph*xnorm[qmsk]**2).sum()
-        val += (x2[qmsk_n]*lbd*(xnorm[qmsk_n] - alph/2).sum()
+        val += (x2[qmsk_n]*lbd*(xnorm[qmsk_n] - alph/2)).sum()
         if np.all(msk):
             infeas = 0
         else:

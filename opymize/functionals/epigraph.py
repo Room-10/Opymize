@@ -221,8 +221,8 @@ class HuberPerspective(Functional):
 
     def __call__(self, x, grad=False):
         assert not grad
-        lbd, alph = self.lbd, self.alph
         x = self.x.vars(x)[0]
+        lbd, alph = self.lbd, self.alph
         msk = x[:,-1] < -1e-8
         x1, x2 = x[msk,:-1], -x[msk,-1]
         xnorm = np.linalg.norm(x1/x2[:,None], axis=-1)
@@ -258,6 +258,7 @@ class TruncQuadEpiInd(Functional):
         assert not grad
         x = self.x.vars(x)[0]
         val = 0
+        lbd, alph = self.lbd, self.alph
         x1norm = np.linalg.norm(x[:,:-1], axis=-1)
         dif = x1norm - self.lbd
         infeas = np.linalg.norm(np.fmax(0, dif), ord=np.inf)

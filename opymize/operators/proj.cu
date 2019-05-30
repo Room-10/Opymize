@@ -140,9 +140,11 @@ inline __device__ TYPE_T solve_reduced_monic_cubic(TYPE_T a, TYPE_T b)
 
 __global__ void quadepiproj(TYPE_T *x)
 {
-    /* Project (x1,x2) onto the epigraph of a paraboloid f(x1) \leq x2.
+    /* Project (x1,x2) onto the epigraph of a paraboloid
      *
-     *      f(x) := 0.5*a*|x|^2 + <b,x> + c
+     *      f(x1) := 0.5*alph*|x1|^2 \leq x2,
+     *
+     * optionally shifted and truncated at |x1 - shift1| < lbd.
      *
      * Note that the multi-dimensional case can be reduced to the scalar case
      * by radial symmetry.
@@ -166,33 +168,54 @@ __global__ void quadepiproj(TYPE_T *x)
     int mm;
     TYPE_T *x1 = &x[i*(M+1)];
     TYPE_T *x2 = &x[i*(M+1) + M];
-    TYPE_T x1norm, y1norm, l2;
+    TYPE_T x1norm, y1norm, l;
     TYPE_T x1norm_sq = 0.0;
 
+#ifdef shift
     for (mm = 0; mm < M+1; mm++) {
         x[i*(M+1) + mm] -= shift[i*(M+1) + mm];
     }
+#endif
 
     for (mm = 0; mm < M; mm++) {
         x1norm_sq += x1[mm]*x1[mm];
     }
 
-    if (x1norm_sq == 0.0 && 0.0 > x2[0]) {
-        x2[0] = 0.0;
-    } else if (0.5*lbd*x1norm_sq > x2[0]) {
+    if (x1norm_sq > 0) {
         x1norm = SQRT(x1norm_sq);
-        l2 = 2.0/(lbd*lbd);
-        y1norm = solve_reduced_monic_cubic(l2*(1 - x2[0]*lbd), -l2*x1norm);
-        x1norm = y1norm/x1norm;
-        for (mm = 0; mm < M; mm++) {
-            x1[mm] *= x1norm;
+#ifdef lbd
+        l = -lbd/alph*x1norm + lbd*(lbd/alph + alph/2);
+        if (l <= x2[0]) {
+            if (x1norm > lbd) {
+                x1norm = lbd/x1norm;
+                for (mm = 0; mm < M; mm++) {
+                    x1[mm] *= x1norm;
+                }
+                l = alph*lbd/2;
+                if (l > x2[0]) {
+                    x2[0] = l;
+                }
+            }
+        } else
+#endif
+        if (0.5*alph*x1norm_sq > x2[0]) {
+            l = 2.0/(alph*alph);
+            y1norm = solve_reduced_monic_cubic(l*(1 - x2[0]*alph), -l*x1norm);
+            x1norm = y1norm/x1norm;
+            for (mm = 0; mm < M; mm++) {
+                x1[mm] *= x1norm;
+            }
+            x2[0] = 0.5*alph*y1norm*y1norm;
         }
-        x2[0] = 0.5*lbd*y1norm*y1norm;
+    } else if (0.0 > x2[0]) {
+        x2[0] = 0.0;
     }
 
+#ifdef shift
     for (mm = 0; mm < M+1; mm++) {
         x[i*(M+1) + mm] += shift[i*(M+1) + mm];
     }
+#endif
 }
 #endif
 

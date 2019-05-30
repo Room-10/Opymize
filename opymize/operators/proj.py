@@ -278,33 +278,47 @@ class L12ProjJacobian(LinOp):
 class QuadEpiProj(Operator):
     """ T(z)[i] = proj[epi(f_i)](z[i])
 
-        f_i(x) := 0.5*a*|x|^2 + <b[i],x> + c[i]
-                = 0.5*a*|x + b[i]/a|^2 - (0.5/a*|b[i]|^2 - c[i])
+        f_i(x) := 0.5*alph*|x|^2 + <b[i],x> + c[i]
+                = 0.5*alph*|x - shift1[i]|^2 + shift2[i]
+
+        shift1 := -b/alph
+        shift2 := -(0.5/alph*|b|^2 - c)
 
     Orthogonal projections onto a (translated) paraboloid which requires root
     finding for cubic polynomials.
+
+    Optionally, the paraboloid is truncated at |x1 - shift1| < lbd.
     """
-    def __init__(self, N, M, a=1.0, b=None, c=None):
+    def __init__(self, N, M, alph=1.0, shift=None, b=None, c=None, lbd=np.inf):
         Operator.__init__(self)
-        assert a > 0
+        assert lbd > 0
+        assert alph > 0
         self.N, self.M = N, M
         self.x = Variable((self.N, self.M + 1))
         self.y = self.x
-        self.a = a
-        self.b = np.zeros((N, M)) if b is None else b
-        self.c = np.zeros((N,)) if c is None else c
-        self.shift = np.zeros((N, M+1))
-        self.shift[:,:-1] = -self.b/self.a
-        self.shift[:,-1] = -(0.5/a*(self.b**2).sum(axis=-1) - self.c)
+        self.lbd = lbd
+        self.alph = alph
+        self.shift = shift
+
+        if not (b is None and c is None):
+            assert self.shift is None
+            self.b = np.zeros((N, M)) if b is None else b
+            self.c = np.zeros((N,)) if c is None else c
+            self.shift = np.zeros((N, M+1))
+            self.shift[:,:-1] = -self.b/self.alph
+            self.shift[:,-1] = -(0.5/self.alph*(self.b**2).sum(axis=-1) - self.c)
 
     def prepare_gpu(self, type_t="double"):
         constvars = {
             'QUAD_EPI_PROJ': 1,
-            'lbd': self.a,
-            'shift': self.shift,
+            'alph': self.alph,
             'N': self.N, 'M': self.M,
             'TYPE_T': type_t,
         }
+        if self.lbd < np.inf:
+            constvars['lbd'] = self.lbd
+        if self.shift is not None:
+            constvars['shift'] = self.shift
         for f in ['sqrt','cbrt','acos','cos','fabs']:
             constvars[f.upper()] = f if type_t == "double" else (f+"f")
         files = [resource_stream('opymize.operators', 'proj.cu')]
@@ -326,20 +340,41 @@ class QuadEpiProj(Operator):
             y = x
         else:
             y[:] = x
-        x = self.x.vars(x)[0]
-        y = self.y.vars(y)[0]
-        y -= self.shift
+        x, y = self.x.vars(x)[0], self.y.vars(y)[0]
+        alph, shift, lbd = self.alph, self.shift, self.lbd
+        if shift is not None: y -= shift
         xnorms = np.linalg.norm(y[:,:-1], ord=2, axis=1)
-        msk = np.logical_and(xnorms == 0.0, 0.0 > y[:,-1])
-        y[msk,-1] = 0.0
-        msk = np.logical_and(xnorms > 0, 0.5*self.a*xnorms**2 > y[:,-1])
-        a_2 = 2.0/self.a**2
-        a = a_2*(1 - y[msk,-1]*self.a)
+        msk_c0 = xnorms == 0
+        msk_c0n = np.logical_not(msk_c0)
+
+        if lbd < np.inf:
+            msk_c1 = -lbd/alph*xnorms + lbd*(lbd/alph + alph/2) > y[:,-1]
+            msk_c1n = np.logical_not(msk_c1)
+            msk_c2 = alph*lbd/2 > y[:,-1]
+            msk_c2n = np.logical_not(msk_c2)
+
+            msk = np.logical_and(xnorms > lbd, msk_c2n)
+            y[msk,:-1] *= lbd/xnorms[msk,None]
+
+            msk = np.logical_and(msk_c2, msk_c1n)
+            y[msk,:-1] *= lbd/xnorms[msk,None]
+            y[msk,-1] = alph*lbd/2
+        else:
+            msk_c1 = np.ones(y.shape[:-1], dtype=bool)
+
+        msk = np.logical_and(msk_c1, msk_c0n)
+        msk = np.logical_and(msk, 0.5*alph*xnorms**2 > y[:,-1])
+        a_2 = 2.0/alph**2
+        a = a_2*(1 - y[msk,-1]*alph)
         b = -a_2*xnorms[msk]
         ynorms = solve_reduced_monic_cubic(a, b)
         y[msk,:-1] *= (ynorms/xnorms[msk])[:,None]
-        y[msk,-1] = 0.5*self.a*ynorms**2
-        y += self.shift
+        y[msk,-1] = 0.5*alph*ynorms**2
+
+        msk = np.logical_and(msk_c0, y[:,-1] < 0)
+        y[msk,-1] = 0.0
+
+        if shift is not None: y += shift
 
 def epigraph_Ab(I, J, v, b):
     nfuns, npoints = I.shape

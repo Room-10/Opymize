@@ -226,7 +226,7 @@ class HuberPerspective(Functional):
         msk = x[:,-1] < -1e-8
         x1, x2 = x[msk,:-1], -x[msk,-1]
         xnorm = np.linalg.norm(x1/x2[:,None], axis=-1)
-        qmsk = xnorm <= alpha
+        qmsk = xnorm <= alph
         qmsk_n = np.logical_not(qmsk)
         val = (x2[qmsk]*lbd*0.5/alph*xnorm[qmsk]**2).sum()
         val += (x2[qmsk_n]*lbd*(xnorm[qmsk_n] - alph/2)).sum()

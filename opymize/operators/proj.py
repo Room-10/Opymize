@@ -311,12 +311,13 @@ class QuadEpiProj(Operator):
     def prepare_gpu(self, type_t="double"):
         constvars = {
             'QUAD_EPI_PROJ': 1,
-            'alph': self.alph,
+            'alph': np.float64(self.alph),
             'N': self.N, 'M': self.M,
             'TYPE_T': type_t,
         }
         if self.lbd < np.inf:
-            constvars['lbd'] = self.lbd
+            constvars['lbd'] = np.float64(self.lbd)
+            constvars['USE_LBD'] = 1
         if self.shift is not None:
             constvars['shift'] = self.shift
             constvars['USE_SHIFT'] = 1
@@ -344,19 +345,19 @@ class QuadEpiProj(Operator):
         x, y = self.x.vars(x)[0], self.y.vars(y)[0]
         alph, shift, lbd = self.alph, self.shift, self.lbd
         if shift is not None: y -= shift
-        xnorms = np.linalg.norm(y[:,:-1], ord=2, axis=1)
-        msk_c0 = xnorms == 0
+        xnorms = np.linalg.norm(y[:,:-1], axis=-1)
+        msk_c0 = (xnorms == 0)
 
         if lbd < np.inf:
-            msk_c1 = -lbd/alph*xnorms + lbd*(lbd/alph + alph/2) > y[:,-1]
-            msk_c2 = alph*lbd/2 > y[:,-1]
+            msk_c1 = -xnorms/(lbd*alph) + 0.5*alph*lbd**2 + 1/alph > y[:,-1]
+            msk_c2 = 0.5*alph*lbd**2 > y[:,-1]
 
             msk = (xnorms > lbd) & (~msk_c2)
             y[msk,:-1] *= lbd/xnorms[msk,None]
 
             msk = msk_c2 & (~msk_c1)
             y[msk,:-1] *= lbd/xnorms[msk,None]
-            y[msk,-1] = alph*lbd/2
+            y[msk,-1] = 0.5*alph*lbd**2
         else:
             msk_c1 = np.ones(y.shape[:-1], dtype=bool)
 

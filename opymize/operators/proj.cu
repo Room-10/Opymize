@@ -183,15 +183,15 @@ __global__ void quadepiproj(TYPE_T *x)
 
     if (x1norm_sq > 0) {
         x1norm = SQRT(x1norm_sq);
-#ifdef lbd
-        l = -lbd/alph*x1norm + lbd*(lbd/alph + alph/2);
+#ifdef USE_LBD
+        l = -x1norm/(lbd*alph) + 0.5*alph*lbd*lbd + 1.0/alph;
         if (l <= x2[0]) {
             if (x1norm > lbd) {
                 x1norm = lbd/x1norm;
                 for (mm = 0; mm < M; mm++) {
                     x1[mm] *= x1norm;
                 }
-                l = alph*lbd/2;
+                l = 0.5*alph*lbd*lbd;
                 if (l > x2[0]) {
                     x2[0] = l;
                 }

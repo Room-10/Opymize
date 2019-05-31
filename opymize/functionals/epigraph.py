@@ -200,8 +200,9 @@ class QuadEpiInd(Functional):
         return self._prox
 
 class HuberPerspective(Functional):
-    """ \sum_i -x[i,-1]*f(-x[i,:-1]/x[i,-1]) if x[i,-1] < 0
-        and inf if x[i,-1] >= 0
+    """ \sum_i  -x[i,-1]*f(-x[i,:-1]/x[i,-1])  if x[i,-1] < 0
+        \sum_i  lbd*|x[i,:-1]|                 if x[i,-1] == 0
+                +inf                           if x[i,-1] > 0
 
         f(x) := |  lbd*(0.5/alph*|x|^2),   if |x| < alph,
                 |  lbd*(|x| - alph/2),     if |x| > alph.
@@ -223,17 +224,14 @@ class HuberPerspective(Functional):
         assert not grad
         x = self.x.vars(x)[0]
         lbd, alph = self.lbd, self.alph
-        msk = x[:,-1] < -1e-8
-        x1, x2 = x[msk,:-1], -x[msk,-1]
-        xnorm = np.linalg.norm(x1/x2[:,None], axis=-1)
-        qmsk = xnorm <= alph
-        qmsk_n = ~qmsk
-        val = (x2[qmsk]*lbd*0.5/alph*xnorm[qmsk]**2).sum()
-        val += (x2[qmsk_n]*lbd*(xnorm[qmsk_n] - alph/2)).sum()
-        if np.all(msk):
-            infeas = 0
-        else:
-            infeas = np.linalg.norm(x[~msk,-1], ord=np.inf)
+        x1, x2 = x[:,:-1], -x[:,-1]
+        x1norm = np.linalg.norm(x1, axis=-1)
+        qmsk = (x1norm < alph*x2)
+        lmsk = (~qmsk) & (x2 > -1e-4) # relaxed positivity condition
+        val = 0.5/alph*(x1norm[qmsk]**2/x2[qmsk]).sum()
+        val += (x1norm[lmsk] - x2[lmsk]*alph/2).sum()
+        val *= lbd
+        infeas = np.linalg.norm(np.fmin(0, x2), ord=np.inf)
         return (val, infeas)
 
 class TruncQuadEpiInd(Functional):

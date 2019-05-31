@@ -214,7 +214,7 @@ class HuberPerspective(Functional):
         self.lbd = lbd
         self.alph = alph
         if conj is None:
-            dlbd, dalph = self.lbd, 1.0/(self.alph*self.lbd)
+            dlbd, dalph = self.lbd, self.alph/self.lbd
             self.conj = TruncQuadEpiInd(N, M, lbd=dlbd, alph=dalph, conj=self)
         else:
             self.conj = conj

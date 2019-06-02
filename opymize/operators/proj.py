@@ -441,19 +441,24 @@ class EpigraphProj(Operator):
         nregions, nsubpoints = self.J.shape
         ndim = self.v.shape[1]
 
+        if type_t == "double":
+            v, b = np.float64(self.v), np.float64(self.b)
+        else:
+            v, b = np.float32(self.v), np.float32(self.b)
+
         constvars = {
             'EPIGRAPH_PROJ': 1,
             'ndim': ndim, 'nfuns': nfuns, 'nregions': nregions,
             'npoints': npoints, 'nsubpoints': nsubpoints,
             'I': self.I, 'J': self.J,
-            'A_STORE': self.v, 'B_STORE': self.b,
+            'A_STORE': v, 'B_STORE': b,
             'term_maxiter': ndim*nsubpoints, 'term_tolerance': 1e-9,
             'TYPE_T': type_t,
         }
         for f in ['fabs']:
             constvars[f.upper()] = f if type_t == "double" else (f+"f")
         files = [resource_stream('opymize.operators', 'proj.cu')]
-        templates = [("epigraphproj", "P", (nregions, nfuns, 1), (24, 12, 1))]
+        templates = [("epigraphproj", "P", (nfuns, nregions, 1), (24, 12, 1))]
         self._kernel = prepare_kernels(files, templates, constvars)['epigraphproj']
 
     def _call_gpu(self, x, y=None, add=False, jacobian=False):

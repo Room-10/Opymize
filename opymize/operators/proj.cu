@@ -565,8 +565,8 @@ __global__ void epigraphproj(TYPE_T *x)
      */
 
     // global thread index
-    int j = blockIdx.x*blockDim.x + threadIdx.x;
-    int i = blockIdx.y*blockDim.y + threadIdx.y;
+    int i = blockIdx.x*blockDim.x + threadIdx.x;
+    int j = blockIdx.y*blockDim.y + threadIdx.y;
 
     // stay inside maximum dimensions
     if (j >= nregions || i >= nfuns) return;

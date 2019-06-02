@@ -314,36 +314,104 @@ inline __device__ void base_trafo_2d(TYPE_T *a0, TYPE_T *a1, TYPE_T *g)
     g[1] = -g[ndim] - g[0];
 }
 
-inline __device__ bool solve_2x2(TYPE_T *A, TYPE_T *b)
+inline __device__ bool solve_3x3(TYPE_T *A, TYPE_T *b)
 {
-    /* Solve a 2x2 linear system of equations.
+    /* Solve a 3x3 linear system of equations.
      *
      * If singular, nothing is written and `false` is returned (else `true`).
      *
      * The result is stored in b.
+     *
+     * This function is an efficient 2x2 solver. Just pass:
+     *
+     *      A[2] = A[5] = A[6] = A[7] = b[2] = 0.0; A[8] = 1.0;
+     *
+     * In this case, b still needs to be of length 3!
+     *
      */
 
-    TYPE_T detA = A[0]*A[3] - A[1]*A[2];
-    TYPE_T res0, res1;
-    int row0 = 0;
-    int row1 = 1;
+    TYPE_T fact, a11, a12, a21, a22;
+    int row0, row1, row2, tmp;
 
-    if (FABS(detA) < 1e-9) {
-        printf("Warning: Singular matrix in solve_2x2, det(A)=%g\n", detA);
-        return false;
-    } else {
-        if(FABS(A[row0*2 + 0]) < FABS(A[row1*2 + 0])) {
-            // swap rows for numerical stability
-            row0 = 1; row1 = 0;
+    // pivoting in first column
+    if (FABS(A[0*3 + 0]) >= FABS(A[1*3 + 0])) {
+        if (FABS(A[0*3 + 0]) >= FABS(A[2*3 + 0])) {
+            row0 = 0; row1 = 1; row2 = 2;
+        } else {
+            row0 = 2; row1 = 1; row2 = 0;
+            fact = b[2]; b[2] = b[0]; b[0] = fact;
         }
-        res1 = A[row1*2 + 0]/A[row0*2 + 0];
-        res0 = A[row1*2 + 1] - A[row0*2 + 1]*res1;
-        res1 = (b[row1] - b[row0]*res1)/res0;
-        res0 = (b[row0] - A[row0*2 + 1]*res1)/A[row0*2 + 0];
-        b[0] = res0;
-        b[1] = res1;
-        return true;
+    } else if (FABS(A[1*3 + 0]) >= FABS(A[2*3 + 0])) {
+        row0 = 1; row1 = 0; row2 = 2;
+        fact = b[1]; b[1] = b[0]; b[0] = fact;
+    } else {
+        row0 = 2; row1 = 1; row2 = 0;
+        fact = b[2]; b[2] = b[0]; b[0] = fact;
     }
+
+    if (FABS(A[row0*3 + 0]) < 1e-9) {
+        printf("Warning: Bad pivot in solve_3x3, A[0,0]=%g\n", A[row0*3 + 0]);
+        return false;
+    }
+
+    a11 = A[row1*3 + 1];
+    a12 = A[row1*3 + 2];
+    a21 = A[row2*3 + 1];
+    a22 = A[row2*3 + 2];
+
+    // elimination in first column
+    if (A[row1*3 + 0] != 0.0) {
+        fact = A[row1*3 + 0]/A[row0*3 + 0];
+        a11 -= fact*A[row0*3 + 1];
+        a12 -= fact*A[row0*3 + 2];
+        b[1] -= fact*b[0];
+    }
+    if (A[row2*3 + 0] != 0.0) {
+        fact = A[row2*3 + 0]/A[row0*3 + 0];
+        a21 -= fact*A[row0*3 + 1];
+        a22 -= fact*A[row0*3 + 2];
+        b[2] -= fact*b[0];
+    }
+
+    // pivoting in second column
+    if (FABS(a11) < FABS(a21)) {
+        tmp = row2; row2 = row1; row1 = tmp;
+        fact = a21; a21 = a11; a11 = fact;
+        fact = a22; a22 = a12; a12 = fact;
+        fact = b[1]; b[1] = b[2]; b[2] = fact;
+    }
+
+    if (FABS(a11) < 1e-9) {
+        printf("Warning: Bad pivot in solve_3x3, A[1,1]=%g\n", a11);
+        return false;
+    }
+
+    // elimination in second column
+    if (a21 != 0.0) {
+        fact = a21/a11;
+        a22 -= fact*a12;
+        b[2] -= fact*b[1];
+    }
+
+    // back substitution
+    if (b[2] != 0.0) {
+        if (FABS(a22) < 1e-9) {
+            printf("Warning: Bad pivot in solve_3x3, A[2,2]=%g\n", a22);
+            return false;
+        }
+        b[2] /= a22;
+        b[1] -= a12*b[2];
+    }
+    b[1] /= a11;
+    if (A[row0*3 + 2] != 0.0 && b[2] != 0.0) {
+        b[0] -= A[row0*3 + 2]*b[2];
+    }
+    if (A[row0*3 + 1] != 0.0) {
+        b[0] -= A[row0*3 + 1]*b[1];
+    }
+    b[0] /= A[row0*3 + 0];
+
+    return true;
 }
 
 inline __device__ void base_trafo_3d(TYPE_T *a0, TYPE_T *a1, TYPE_T *a2, TYPE_T *g)
@@ -355,17 +423,24 @@ inline __device__ void base_trafo_3d(TYPE_T *a0, TYPE_T *a1, TYPE_T *a2, TYPE_T 
      *      g[0]*(a0,-1) + g[1]*(a1,-1) + g[2]*(a2,-1) = input
      */
 
-    TYPE_T matrix[4];
+    TYPE_T matrix[9];
+    TYPE_T g2 = g[2];
     matrix[0] = a0[0] - a2[0];
     matrix[1] = a1[0] - a2[0];
-    matrix[2] = a0[1] - a2[1];
-    matrix[3] = a1[1] - a2[1];
-    g[0] = g[0] + g[2]*a2[0];
-    g[1] = g[1] + g[2]*a2[1];
-    solve_2x2(matrix, g);
+    matrix[2] = 0.0;
+    matrix[3] = a0[1] - a2[1];
+    matrix[4] = a1[1] - a2[1];
+    matrix[5] = 0.0;
+    matrix[6] = 0.0;
+    matrix[7] = 0.0;
+    matrix[8] = 1.0;
+    g[0] = g[0] + g2*a2[0];
+    g[1] = g[1] + g2*a2[1];
+    g[2] = 0;
+    solve_3x3(matrix, g);
 
     // make use of -mu[0]-mu[1]-mu[2] = g[2]
-    g[2] = -g[2] - g[1] - g[0];
+    g[2] = -g2 - g[1] - g[0];
 }
 
 inline __device__ int array_index_of(int *array, int array_size, int val) {

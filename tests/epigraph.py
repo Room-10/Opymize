@@ -86,7 +86,11 @@ def test_support_1d(nsubpoints):
     for i in range(nfuns):
         b[i,:] = fct(v, a_arr[i], b_arr[i], c_arr[i]).ravel()
 
-    sigma = EpigraphSupportFct(I, J, v, b)
+    faces = np.array([(0,2),(nsubpoints-1,1)] \
+                   + [(k,k+1) for k in range(2,nsubpoints-1)])
+    If = [[faces.copy() for j in range(nregions)] for i in range(nfuns)]
+
+    sigma = EpigraphSupportFct(I, If, J, v, b)
     x = np.zeros((nregions, nfuns, ndim+1))
     for j in range(nregions):
         x[j,:,-1] = -np.random.rand()

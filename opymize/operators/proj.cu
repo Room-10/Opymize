@@ -413,7 +413,7 @@ inline __device__ void base_trafo_2d(TYPE_T *a0, TYPE_T *a1, TYPE_T *g)
     for (k = 0; k < ndim; k++) {
         fac = a0[k] - a1[k];
         matrix00 += fac*fac;
-        rhs += g[k]*g[k];
+        rhs += fac*g[k];
     }
     g[0] = rhs/matrix00;
 #endif

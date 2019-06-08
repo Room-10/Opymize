@@ -12,10 +12,11 @@ class EpigraphInd(Functional):
         F(x) = 0 if <v[k],x[j,i,:-1]> - b[i,k] <= x[j,i,-1]
                     for any i,j,k with I[i,J[j]][k] == True
     """
-    def __init__(self, I, J, v, b, conj=None):
+    def __init__(self, I, If, J, v, b, conj=None):
         """
         Args:
             I : ndarray of bools, shape (nfuns, npoints)
+            If : nfuns lists of nregions arrays, shape (nfaces,ndim+1) each
             J : ndarray of ints, shape (nregions, nsubpoints)
             v : ndarray of floats, shape (npoints, ndim)
             b : ndarray of floats, shape (nfuns, npoints)
@@ -30,7 +31,7 @@ class EpigraphInd(Functional):
         self.x = Variable((nregions, nfuns, ndim+1))
 
         if conj is None:
-            self.conj = EpigraphSupp(I, J, v, b, conj=self)
+            self.conj = EpigraphSupp(I, If, J, v, b, conj=self)
         else:
             self.conj = conj
 
@@ -107,7 +108,7 @@ class EpigraphSupp(Functional):
         self.checks[:] = np.linalg.inv(self.checks).transpose(0,2,1)
 
         if conj is None:
-            self.conj = EpigraphInd(I, J, v, b, conj=self)
+            self.conj = EpigraphInd(I, If, J, v, b, conj=self)
         else:
             self.conj = conj
 

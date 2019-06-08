@@ -231,7 +231,40 @@ inline __device__ TYPE_T compute_Ax(TYPE_T *A, TYPE_T *x) {
     return Ax;
 }
 
-inline __device__ void proj_plane(TYPE_T *a, TYPE_T *g)
+inline __device__ TYPE_T det_2d(TYPE_T a11, TYPE_T a12, TYPE_T a21, TYPE_T a22) {
+    return a11*a22 - a12*a21;
+}
+
+inline __device__ TYPE_T det_3d(TYPE_T a11, TYPE_T a12, TYPE_T a13,
+                     TYPE_T a21, TYPE_T a22, TYPE_T a23,
+                     TYPE_T a31, TYPE_T a32, TYPE_T a33) {
+    return a11*det_2d(a22, a23, a32, a33)
+         - a21*det_2d(a12, a13, a32, a33)
+         + a31*det_2d(a12, a13, a22, a23);
+}
+
+inline __device__ void hodge_3d(TYPE_T *a1, TYPE_T *a2, TYPE_T *res) {
+    res[0] =  det_2d(a1[1],    -1, a2[1],    -1);
+    res[1] = -det_2d(a1[0],    -1, a2[0],    -1);
+    res[2] =  det_2d(a1[0], a1[1], a2[0], a2[1]);
+}
+
+inline __device__ void hodge_4d(TYPE_T *a1, TYPE_T *a2, TYPE_T *a3, TYPE_T *res) {
+    res[0] = -det_3d(a1[1], a1[2],    -1,
+                     a2[1], a2[2],    -1,
+                     a3[1], a3[2],    -1);
+    res[1] =  det_3d(a1[0], a1[2],    -1,
+                     a2[0], a2[2],    -1,
+                     a3[0], a3[2],    -1);
+    res[2] = -det_3d(a1[0], a1[1],    -1,
+                     a2[0], a2[1],    -1,
+                     a3[0], a3[1],    -1);
+    res[3] =  det_3d(a1[0], a1[1], a1[2],
+                     a2[0], a2[1], a2[2],
+                     a3[0], a3[1], a3[2]);
+}
+
+inline __device__ void proj1(TYPE_T *a, TYPE_T *g)
 {
     /* Compute the normal projection of g onto the subspace which
      * is orthogonal to (a,-1).
@@ -243,9 +276,8 @@ inline __device__ void proj_plane(TYPE_T *a, TYPE_T *g)
      *
      * The result is stored in g.
      */
-
     TYPE_T fac, facn;
-    int k;
+    uint k;
 
     // fac : <(a,-1),g> / <(a,-1),(a,-1)>
     fac = compute_Ax(a, g);
@@ -262,9 +294,9 @@ inline __device__ void proj_plane(TYPE_T *a, TYPE_T *g)
     }
 }
 
-inline __device__ void proj_line(TYPE_T *a0, TYPE_T *a1, TYPE_T *g)
+inline __device__ void proj2(TYPE_T *a0, TYPE_T *a1, TYPE_T *g)
 {
-    /* Compute the normal projection of g onto the 1-dimensional subspace which
+    /* Compute the normal projection of g onto the subspace which
      * is orthogonal to span{(a0,-1),(a1,-1)}.
      *
      * This is equivalent to solving
@@ -275,21 +307,83 @@ inline __device__ void proj_line(TYPE_T *a0, TYPE_T *a1, TYPE_T *g)
      *
      * The result is stored in g.
      */
+    uint k;
 
+#if (ndim == 2)
     // v : cross product of (a0,-1) and (a1,-1)
     TYPE_T v[3];
-    v[0] = a0[1]*(-1)  -  (-1)*a1[1];
-    v[1] =  (-1)*a1[0] - a0[0]*(-1) ;
-    v[2] = a0[0]*a1[1] - a0[1]*a1[0];
+    hodge_3d(a0, a1, v);
 
     // fac : <g,v>/<v,v>
-    TYPE_T fac  = v[0]*g[0] + v[1]*g[1] + v[2]*g[2];
-           fac /= v[0]*v[0] + v[1]*v[1] + v[2]*v[2];
+    TYPE_T fac = 0;
+    TYPE_T facn = 0;
+    for (k = 0; k < ndim+1; k++) {
+        fac += v[k]*g[k];
+        facn += v[k]*v[k];
+    }
+    fac /= facn;
 
     // g = fac*v
-    g[0] = fac*v[0];
-    g[1] = fac*v[1];
-    g[2] = fac*v[2];
+    for (k = 0; k < ndim+1; k++) {
+        g[k] = fac*v[k];
+    }
+#elif (ndim == 3)
+    TYPE_T fac0, fac1;
+    TYPE_T a1o[ndim+1];
+
+    // {(a0,-1),a1o} is orthogonal basis of span{(a0,-1),(a1,-1)}
+    fac1 = (-1)*(-1) + a1[0]*a0[0] + a1[1]*a0[1] + a1[2]*a0[2];
+    fac0 = (-1)*(-1) + a0[0]*a0[0] + a0[1]*a0[1] + a0[2]*a0[2];
+    fac1 /= fac0;
+    a1o[ndim] = (-1) - fac1*(-1);
+    for (k = 0; k < ndim; k++) {
+        a1o[k] = a1[k] - fac1*a0[k];
+    }
+
+    // g -= <g,(a0,-1)>/<(a0,-1),(a0,-1)> (a0,-1) + <g,a1o>/<a1o,a1o> a1o
+    fac0 = compute_Ax(a0, g)/fac0;
+    fac1 = a1o[0]*g[0] + a1o[1]*g[1] + a1o[2]*g[2] + a1o[3]*g[3];
+    fac1 /= a1o[0]*a1o[0] + a1o[1]*a1o[1] + a1o[2]*a1o[2] + a1o[3]*a1o[3];
+    g[ndim] -= fac0*(-1) + fac1*a1o[ndim];
+    for (k = 0; k < ndim; k++) {
+        g[k] -= fac0*a0[k] + fac1*a1o[k];
+    }
+#endif
+}
+
+inline __device__ void proj3(TYPE_T *a0, TYPE_T *a1, TYPE_T *a2, TYPE_T *g)
+{
+    /* Compute the normal projection of g onto the subspace which
+     * is orthogonal to span{(a0,-1),(a1,-1),(a2,-1)}.
+     *
+     * This is equivalent to solving
+     *
+     *      minimize  0.5*<p,p> - <g,p>
+     *          s.t.  a0[0]*p[0] + a0[1]*p[1] = p[2],
+     *                a1[0]*p[0] + a1[1]*p[1] = p[2],
+     *                a2[0]*p[0] + a2[1]*p[1] = p[2].
+     *
+     * The result is stored in g.
+     */
+    int k;
+
+    // v : normal of span{(a0,-1),(a1,-1),(a2,-1)}
+    TYPE_T v[ndim+1];
+    hodge_4d(a0, a1, a2, v);
+
+    // fac : <g,v>/<v,v>
+    TYPE_T fac = 0;
+    TYPE_T facn = 0;
+    for (k = 0; k < ndim+1; k++) {
+        fac += v[k]*g[k];
+        facn += v[k]*v[k];
+    }
+    fac /= facn;
+
+    // g = fac*v
+    for (k = 0; k < ndim+1; k++) {
+        g[k] = fac*v[k];
+    }
 }
 
 inline __device__ void base_trafo_2d(TYPE_T *a0, TYPE_T *a1, TYPE_T *g)
@@ -299,18 +393,30 @@ inline __device__ void base_trafo_2d(TYPE_T *a0, TYPE_T *a1, TYPE_T *g)
      * The result is stored in g so that
      *
      *      g[0]*(a0,-1) + g[1]*(a1,-1) = input
+     *
+     *      g[1] = -input[ndim] - g[0]
+     *      g[0]*(a0 - a1) = input[:ndim] + input[ndim]*a1
      */
+#if (ndim == 1)
+    g[0] += g[ndim]*a1[0];
+    g[0] /= (a0[0] - a1[0]);
+#else
+    uint k;
+    TYPE_T matrix00, fac, rhs;
 
-    TYPE_T diff0 = a0[0] - a1[0];
-    TYPE_T diff1 = (ndim == 2) ? (a0[1] - a1[1]) : 0.0;
-
-    if (ndim == 2 && FABS(diff1) > FABS(diff0)) {
-        g[0] = (g[1] + g[ndim]*a1[1])/diff1;
-    } else {
-        g[0] = (g[0] + g[ndim]*a1[0])/diff0;
+    for (k = 0; k < ndim; k++) {
+        g[k] += g[ndim]*a1[k];
     }
 
-    // make use of -mu[0]-mu[1] = g[ndim]
+    matrix00 = 0;
+    rhs = 0;
+    for (k = 0; k < ndim; k++) {
+        fac = a0[k] - a1[k];
+        matrix00 += fac*fac;
+        rhs += g[k]*g[k];
+    }
+    g[0] = rhs/matrix00;
+#endif
     g[1] = -g[ndim] - g[0];
 }
 
@@ -421,26 +527,74 @@ inline __device__ void base_trafo_3d(TYPE_T *a0, TYPE_T *a1, TYPE_T *a2, TYPE_T 
      * The result is stored in g so that
      *
      *      g[0]*(a0,-1) + g[1]*(a1,-1) + g[2]*(a2,-1) = input
+     *
+     *      g[2] = -input[ndim] - g[0] - g[1]
+     *      g[0]*(a0 - a2) + g[1]*(a1 - a2) = input[:ndim] + input[ndim]*a2
      */
-
+    uint k;
     TYPE_T matrix[9];
     TYPE_T g2 = g[2];
-    matrix[0] = a0[0] - a2[0];
-    matrix[1] = a1[0] - a2[0];
+
+#if (ndim == 2)
+    for (k = 0; k < 2; k++) {
+        g[k] += g2*a2[k];
+        matrix[k*3 + 0] = a0[k] - a2[k];
+        matrix[k*3 + 1] = a1[k] - a2[k];
+    }
+    g[2] = 0;
     matrix[2] = 0.0;
-    matrix[3] = a0[1] - a2[1];
-    matrix[4] = a1[1] - a2[1];
     matrix[5] = 0.0;
     matrix[6] = 0.0;
     matrix[7] = 0.0;
     matrix[8] = 1.0;
+#else
     g[0] = g[0] + g2*a2[0];
     g[1] = g[1] + g2*a2[1];
-    g[2] = 0;
-    solve_3x3(matrix, g);
+    g[2] = g[2] + g2*a2[2];
+    matrix[0] = 0; matrix[1] = 0; matrix[4] = 0; matrix[6] = 0; matrix[7] = 0;
+    for (k = 0; k < ndim; k++) {
+        matrix[0] += (a0[k] - a2[k])*(a0[k] - a2[k]);
+        matrix[1] += (a1[k] - a2[k])*(a0[k] - a2[k]);
+        matrix[4] += (a1[k] - a2[k])*(a1[k] - a2[k]);
+        matrix[6] += g[k]*(a0[k] - a2[k]);
+        matrix[7] += g[k]*(a1[k] - a2[k]);
+    }
 
-    // make use of -mu[0]-mu[1]-mu[2] = g[2]
+    g[0] = matrix[6];
+    g[1] = matrix[7];
+    g[2] = 0;
+    matrix[2] = 0.0;
+    matrix[3] = matrix[1];
+    matrix[5] = 0.0;
+    matrix[6] = 0.0;
+    matrix[7] = 0.0;
+    matrix[8] = 1.0;
+#endif
+    solve_3x3(matrix, g);
     g[2] = -g2 - g[1] - g[0];
+}
+
+inline __device__ void base_trafo_4d(TYPE_T *a0, TYPE_T *a1, TYPE_T *a2,
+                                     TYPE_T *a3, TYPE_T *g)
+{
+    /* Express g in terms of {(a0,-1), (a1,-1), (a2,-1), (a3,-1)}.
+     *
+     * The result is stored in g so that
+     *
+     *      g[0]*(a0,-1) + g[1]*(a1,-1) + g[2]*(a2,-1) + g[3]*(a3,-1) = input
+     *
+     *      g[3] = -input[3] - g[0] - g[1] - g[2]
+     *      g[0]*(a0 - a3) + g[1]*(a1 - a3) + g[2]*(a2 - a3) = input[:3] + input[3]*a3
+     */
+    TYPE_T matrix[9];
+    for (uint k = 0; k < 3; k++) {
+        g[k] += g[3]*a3[k];
+        matrix[k*3 + 0] = a0[k] - a3[k];
+        matrix[k*3 + 1] = a1[k] - a3[k];
+        matrix[k*3 + 2] = a2[k] - a3[k];
+    }
+    solve_3x3(matrix, g);
+    g[3] = -g[3] - g[0] - g[1] - g[2];
 }
 
 inline __device__ int array_index_of(int *array, int array_size, int val) {
@@ -470,7 +624,7 @@ inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T 
      *
      *      minimize  0.5*||y - x||**2   s.t.  A y <= b,
      *
-     * using an active set method that assumes that at most three constraints
+     * using an active set method that assumes that at most (ndim+1) constraints
      * are active at the same time.
      *
      * For more details see Algorithm 16.3 in
@@ -496,12 +650,12 @@ inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T 
     TYPE_T step_min, step, Ax, Ad;
 
     // active and working set
-    int active_set[3];
+    int active_set[ndim+1];
     int active_set_size = 0;
     int blocking = -1;
 
     // lagrange multipliers
-    TYPE_T lambda[3];
+    TYPE_T lambda[ndim+1];
     int lambda_argmin;
 
     // initialize with input
@@ -531,9 +685,11 @@ inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T 
         }
 
         if (active_set_size == 1) {
-            proj_plane(A[active_set[0]], dir);
+            proj1(A[active_set[0]], dir);
         } else if (active_set_size == 2) {
-            proj_line(A[active_set[0]], A[active_set[1]], dir);
+            proj2(A[active_set[0]], A[active_set[1]], dir);
+        } else if (active_set_size == 3) {
+            proj3(A[active_set[0]], A[active_set[1]], A[active_set[2]], dir);
         }
 
         step = 0.0;
@@ -555,9 +711,10 @@ inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T 
                 Ax = compute_Ax(A[k], sol);
                 Ad = compute_Ax(A[k], dir);
 
-                // dir is orthogonal to a0 and a1. However, by the following
-                // check, dir can't be orthogonal to a blocking constraint,
-                // hence (a0,a1,a2) is always linearly independent.
+                // dir is orthogonal to the active constraints. However, by the
+                // following check, dir can't be orthogonal to a blocking
+                // constraint. Hence, the blocking constraint is linearly
+                // independent from the active constraints.
                 if (Ad > term_tolerance) {
                     step = (b[k] - Ax)/Ad;
                     if (step < step_min && step > -term_tolerance) {
@@ -590,14 +747,13 @@ inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T 
             }
 
             if (active_set_size == 2) {
-                // No blocking constraint: sol is exact orthogonal projection of
-                // x onto orth{a0,a1}. Hence, x-sol is in span{a0,a1}.
                 base_trafo_2d(A[active_set[0]], A[active_set[1]], lambda);
             } else if (active_set_size == 3) {
-                // dir != 0 and a blocking constraint a2. In this case,
-                // (a0,a1,a2) is linearly independent (see comment above).
                 base_trafo_3d(A[active_set[0]], A[active_set[1]],
                               A[active_set[2]], lambda);
+            } else if (active_set_size == 4) {
+                base_trafo_4d(A[active_set[0]], A[active_set[1]],
+                              A[active_set[2]], A[active_set[3]], lambda);
             }
 
             lambda_argmin = array_argmin(lambda, active_set_size);

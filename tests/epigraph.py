@@ -79,7 +79,9 @@ def test_support_1d(nsubpoints):
     v = np.zeros((nregions, nsubpoints, ndim), dtype=np.float64)
     for j in range(nregions):
         v[j,:] = np.linspace(x0[j], x1[j], nsubpoints)[:,None]
-        J[j,[1,-1]] = J[j,[-1,1]]
+        tmp = J[j,-1]
+        J[j,2:] = J[j,1:-1]
+        J[j,1] = tmp
     v = v.reshape(npoints, ndim)
 
     b = np.zeros((nfuns, npoints), dtype=np.float64)
@@ -104,8 +106,10 @@ def test_support_1d(nsubpoints):
     print("%.2e (%.2e)" % (np.abs(f.sum() - sx[0]), sx[1]))
 
 def main():
+    print("Testing EpigraphSupport (error should decrease, infeas=0) ...")
     for N in [5, 50, 500, 5000]:
         test_support_1d(N)
+    print("Testing 2d epigraph projections...")
     for i in range(10):
         test_proj_2d()
 

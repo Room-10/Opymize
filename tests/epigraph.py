@@ -8,8 +8,7 @@ from opymize.tools.tests import test_gpu_op
 
 tol = 1e-10
 
-def test_proj_2d():
-    ndim = 2
+def test_proj_nd(ndim):
     npoints = 3
     nfuns = 2
     nregions = 1
@@ -43,7 +42,7 @@ def test_proj_2d():
 
     # x : point inside half space (mapped to itself)
     x = x_in.copy()
-    x[0,:,-1] += 4*np.random.rand(ndim)
+    x[0,:,-1] += 4*np.random.rand(nfuns)
     op(x, x_out)
     assert np.linalg.norm(x_out - x)**2 < tol
 
@@ -109,9 +108,10 @@ def main():
     print("Testing EpigraphSupport (error should decrease, infeas=0) ...")
     for N in [5, 50, 500, 5000]:
         test_support_1d(N)
-    print("Testing 2d epigraph projections...")
+    print("Testing epigraph projections...")
     for i in range(10):
-        test_proj_2d()
+        test_proj_nd(2)
+        test_proj_nd(3)
 
 if __name__ == "__main__":
     main()

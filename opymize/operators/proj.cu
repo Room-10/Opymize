@@ -533,11 +533,11 @@ inline __device__ void base_trafo_3d(TYPE_T *a0, TYPE_T *a1, TYPE_T *a2, TYPE_T 
      */
     uint k;
     TYPE_T matrix[9];
-    TYPE_T g2 = g[2];
+    TYPE_T input_ndim = g[ndim];
 
 #if (ndim == 2)
     for (k = 0; k < 2; k++) {
-        g[k] += g2*a2[k];
+        g[k] += g[2]*a2[k];
         matrix[k*3 + 0] = a0[k] - a2[k];
         matrix[k*3 + 1] = a1[k] - a2[k];
     }
@@ -548,20 +548,22 @@ inline __device__ void base_trafo_3d(TYPE_T *a0, TYPE_T *a1, TYPE_T *a2, TYPE_T 
     matrix[7] = 0.0;
     matrix[8] = 1.0;
 #else
-    g[0] = g[0] + g2*a2[0];
-    g[1] = g[1] + g2*a2[1];
-    g[2] = g[2] + g2*a2[2];
-    matrix[0] = 0; matrix[1] = 0; matrix[4] = 0; matrix[6] = 0; matrix[7] = 0;
+    TYPE_T a02k, a12k, ga2k;
+    TYPE_T g0 = 0, g1 = 0;
+    matrix[0] = 0; matrix[1] = 0; matrix[4] = 0;
     for (k = 0; k < ndim; k++) {
-        matrix[0] += (a0[k] - a2[k])*(a0[k] - a2[k]);
-        matrix[1] += (a1[k] - a2[k])*(a0[k] - a2[k]);
-        matrix[4] += (a1[k] - a2[k])*(a1[k] - a2[k]);
-        matrix[6] += g[k]*(a0[k] - a2[k]);
-        matrix[7] += g[k]*(a1[k] - a2[k]);
+        ga2k = g[k] + g[3]*a2[k];
+        a02k = a0[k] - a2[k];
+        a12k = a1[k] - a2[k];
+        g0 += ga2k*a02k;
+        g1 += ga2k*a12k;
+        matrix[0] += a02k*a02k;
+        matrix[1] += a12k*a02k;
+        matrix[4] += a12k*a12k;
     }
 
-    g[0] = matrix[6];
-    g[1] = matrix[7];
+    g[0] = g0;
+    g[1] = g1;
     g[2] = 0;
     matrix[2] = 0.0;
     matrix[3] = matrix[1];
@@ -571,7 +573,7 @@ inline __device__ void base_trafo_3d(TYPE_T *a0, TYPE_T *a1, TYPE_T *a2, TYPE_T 
     matrix[8] = 1.0;
 #endif
     solve_3x3(matrix, g);
-    g[2] = -g2 - g[1] - g[0];
+    g[2] = -input_ndim - g[1] - g[0];
 }
 
 inline __device__ void base_trafo_4d(TYPE_T *a0, TYPE_T *a1, TYPE_T *a2,
@@ -725,8 +727,10 @@ inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T 
             }
 
             // advance
-            for (k = 0; k < ndim+1; k++) {
-                sol[k] += step_min*dir[k];
+            if (step_min != 0) {
+                for (k = 0; k < ndim+1; k++) {
+                    sol[k] += step_min*dir[k];
+                }
             }
         }
 
@@ -767,7 +771,7 @@ inline __device__ void solve_qp(TYPE_T *x, TYPE_T **A, TYPE_T *b, int N, TYPE_T 
         }
     }
 
-    if (_iter == term_maxiter) {
+    if (_iter >= term_maxiter) {
         printf("Warning: active set method didn't converge within %d "
                "iterations.\n", term_maxiter);
     }

@@ -40,7 +40,7 @@ class PDHG(object):
             'infeasp': infeas_p,
             'infeasd': infeas_d,
             'gap': obj_p - obj_d,
-            'relgap': (obj_p - obj_d) / max(np.spacing(1), obj_d)
+            'relgap': (obj_p - obj_d) / max(np.spacing(1), abs(obj_d))
         }
 
     def prepare_gpu(self, type_t="double"):

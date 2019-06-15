@@ -47,10 +47,11 @@ __global__ void gradient(TYPE_T *x, TYPE_T *y)
     if (i >= N || k >= C || t >= D) return;
 
     // iteration variable and misc.
-    int aa, base;
     TYPE_T newval, fac;
-
     newval = 0.0;
+
+#if defined(SCHEME_CENTERED)
+    int aa, base;
     fac = weights[k]/(imageh[t]*(TYPE_T)navgskips);
 
     // skip points on "bottom or right" boundary
@@ -60,6 +61,15 @@ __global__ void gradient(TYPE_T *x, TYPE_T *y)
             newval += x[(base + skips[t])*C + k] - x[base*C + k];
         }
     }
+#elif defined(SCHEME_FORWARD)
+    int coords[D];
+    i2coords(i, coords);
+
+    fac = weights[k]/imageh[t];
+    if (coords[t] < imagedims[t]-1) {
+        newval += x[(i + skips[t])*C + k] - x[i*C + k];
+    }
+#endif
 
     y[i*dc_skip + t*C + k] += fac*newval;
 }
@@ -77,12 +87,14 @@ __global__ void divergence(TYPE_T *x, TYPE_T *y)
        return;
 
     // iteration variable and misc.
-    int tt, aa, base, idx;
+    int tt;
     int coords[D];
     i2coords(i, coords);
     TYPE_T newval, fac;
-
     newval = 0.0;
+
+#if defined(SCHEME_CENTERED)
+    int aa, base, idx;
     fac = weights[k]/(TYPE_T)navgskips;
 
     for (tt = 0; tt < D; tt++) {
@@ -99,6 +111,17 @@ __global__ void divergence(TYPE_T *x, TYPE_T *y)
             }
         }
     }
+#elif defined(SCHEME_FORWARD)
+    fac = weights[k];
+    for (tt = 0; tt < D; tt++) {
+        if (coords[tt] < imagedims[tt]-1) {
+            newval -= x[i*dc_skip + tt*C + k]/imageh[tt];
+        }
+        if (coords[tt] > 0) {
+            newval += x[(i - skips[tt])*dc_skip + tt*C + k]/imageh[tt];
+        }
+    }
+#endif
 
     y[i*C + k] += fac*newval;
 }

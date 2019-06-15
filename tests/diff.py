@@ -30,9 +30,10 @@ def cell_centered_grid(domain, shape):
 
 def test_grad():
     imagedims = (10,12)
+    imageh = np.array([0.3,0.4])
     ndims = len(imagedims)
     nchannels = 3
-    grad = GradientOp(imagedims, nchannels)
+    grad = GradientOp(imagedims, nchannels, imageh=imageh)
     for op in [grad,grad.adjoint]:
         test_adjoint(op)
         test_rowwise_lp(op)

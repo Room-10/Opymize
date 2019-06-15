@@ -41,11 +41,12 @@ def staggered_diff_avgskips(imagedims):
                     break
     return avgskips
 
-def diff_prepare_gpu(imagedims, imageh, nchannels, weights, type_t):
+def diff_prepare_gpu(scheme, imagedims, imageh, nchannels, weights, type_t):
     npoints = np.prod(imagedims)
     ndims = len(imagedims)
     skips = imagedim_skips(imagedims)
     constvars = {
+        'SCHEME_%s'%scheme.upper(): 1,
         'GRAD_DIV': 1,
         'N': npoints, 'D': ndims, 'C': nchannels, 'dc_skip': ndims*nchannels,
         'skips': np.array(skips, dtype=np.int64, order='C'),
@@ -66,33 +67,47 @@ def diff_prepare_gpu(imagedims, imageh, nchannels, weights, type_t):
 class GradientOp(LinOp):
     """ Gradients D x^k of x^k: y_t^k += b^k * D_t x^k`
 
-    Example in two dimensions (+ are the grid points of x), k fixed:
+    Here is an explanation of the (default) finite differences scheme "centered":
 
-           |                |
-    ... -- + -- -- v1 -- -- + -- ...
-           |                |
-           |                |
-           v2      Dx       w2
-           |                |
-           |                |
-    ... -- + -- -- w1 -- -- + -- ...
-           |                |
+        Example in two dimensions (+ are the grid points of x), k fixed:
 
-    v1 and w1 -- the partial x-derivatives at top and bottom
-    v2 and w2 -- the partial y-derivatives at left and right
-    Dx -- the gradient at the center of the box
-    (Dx)_1 -- mean value of v1 and w1
-    (Dx)_2 -- mean value of v2 and w2
+               |                |
+        ... -- + -- -- v1 -- -- + -- ...
+               |                |
+               |                |
+               v2      Dx       w2
+               |                |
+               |                |
+        ... -- + -- -- w1 -- -- + -- ...
+               |                |
 
-    In one dimension there is no averaging, in three dimensions each
-    derivative is the mean value of four finite differences etc.
+        v1 and w1 -- the partial x-derivatives at top and bottom
+        v2 and w2 -- the partial y-derivatives at left and right
+        Dx -- the gradient at the center of the box
+        (Dx)_1 -- mean value of v1 and w1
+        (Dx)_2 -- mean value of v2 and w2
 
-    The "boundary" of y is left untouched.
+        In one dimension there is no averaging, in three dimensions each
+        derivative is the mean value of four finite differences etc.
 
-    Note that the kernel of this operator is not only spanned by constant data,
-    but by checkerboard patterns.
+        The "boundary" of y is left untouched.
+
+        Note that the kernel of the centered finite differences operator is not
+        only spanned by constant data, but by checkerboard patterns!
+
+    Args:
+        imagedims : tuple of ints, length ndims
+            resolution of the cartesian grid
+        nchannels : int
+            number of channels (computes Jacobian of vector fields)
+        scheme : "centered" (default) or "forward"
+            finite differences scheme
+        imageh : ndarray of floats, shape (ndims,)
+            step sizes of the cartesian grid, default: [1.0,...,1.0]
+        weights : ndarray of floats, shape (nchannels,)
+            channelwise weights, default: [1.0,...,1.0]
     """
-    def __init__(self, imagedims, nchannels,
+    def __init__(self, imagedims, nchannels, scheme="centered",
                        imageh=None, weights=None, adjoint=None):
         LinOp.__init__(self)
         ndims = len(imagedims)
@@ -101,12 +116,13 @@ class GradientOp(LinOp):
         self.nchannels = nchannels
         self.x = Variable((npoints, nchannels))
         self.y = Variable((npoints, ndims, nchannels))
+        self.scheme = scheme
         self.imageh = np.ones(ndims) if imageh is None else imageh
         self.weights = np.ones(nchannels) if weights is None else weights
         self._kernels = None
         self.spmat = diffopn(self.imagedims, components=self.nchannels,
                              steps=self.imageh, weights=self.weights,
-                             schemes="centered")
+                             schemes=self.scheme)
 
         if adjoint is None:
             self.adjoint = DivergenceOp(imagedims, nchannels,
@@ -117,7 +133,7 @@ class GradientOp(LinOp):
     def prepare_gpu(self, kernels=None, type_t="double"):
         if self._kernels is not None: return
         if kernels is None:
-            kernels = diff_prepare_gpu(self.imagedims, self.imageh,
+            kernels = diff_prepare_gpu(self.scheme, self.imagedims, self.imageh,
                                        self.nchannels, self.weights, type_t)
         self._kernels = kernels
         self.adjoint.prepare_gpu(kernels, type_t=type_t)
@@ -156,7 +172,7 @@ class DivergenceOp(LinOp):
     def prepare_gpu(self, kernels=None, type_t="double"):
         if self._kernels is not None: return
         if kernels is None:
-            kernels = diff_prepare_gpu(self.imagedims, self.imageh,
+            kernels = diff_prepare_gpu(self.scheme, self.imagedims, self.imageh,
                                        self.nchannels, self.weights, type_t)
         self._kernels = kernels
         self.adjoint.prepare_gpu(kernels, type_t=type_t)

@@ -58,7 +58,7 @@ Setup
 
 Installing is as easy as
 
-    pip install git+https://github.com/room-10/Opymize
+    pip install cython git+https://github.com/room-10/Opymize
 
 For GPU support you need to install NVIDIA drivers and PyCuda manually.
 

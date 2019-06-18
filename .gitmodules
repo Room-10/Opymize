@@ -1,0 +1,6 @@
+[submodule "opymize/quickhull/quickhull_src"]
+	path = opymize/quickhull/quickhull_src
+	url = https://github.com/akuukka/quickhull
+[submodule "opymize/quickhull/qhull_src"]
+	path = opymize/quickhull/qhull_src
+	url = https://github.com/qhull/qhull

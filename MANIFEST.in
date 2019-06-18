@@ -1,0 +1,1 @@
+recursive-include ./opymize/quickhull *.c *.h *.cpp *.hpp *.pro Makefile

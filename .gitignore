@@ -2,4 +2,7 @@ env
 __pycache__
 *.pyc
 *.egg-info
+.eggs
+dist
 examples/*.png
+opymize/quickhull/__init__.cpp

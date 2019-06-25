@@ -1,8 +1,10 @@
 env
 __pycache__
 *.pyc
+*.so
 *.egg-info
 .eggs
+build
 dist
 examples/*.png
 opymize/quickhull/__init__.cpp

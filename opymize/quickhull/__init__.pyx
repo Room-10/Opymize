@@ -29,7 +29,7 @@ def piecewise_convexify(points, vals, regions):
 
     if nsubpoints == ndim+1:
         base = np.ones((nfuns, npoints), dtype=np.int8, order='C')
-        faces = [[np.arange(ndim+1, dtype=np.int64)[None]]]*nfuns
+        faces = [[np.arange(ndim+1, dtype=np.int64)[None]]*nregions]*nfuns
         return base.astype(bool), faces
     else:
         assert points.shape[1] in [1,2,3]
